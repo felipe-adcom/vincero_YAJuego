@@ -1,0 +1,6 @@
+# Datos con información personal: nunca se versionan
+data/raw/*
+data/warehouse/*
+data/exports/*
+!data/**/.gitkeep
+__pycache__/

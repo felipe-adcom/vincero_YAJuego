@@ -1,0 +1,11 @@
+campana,variante,destino,texto
+ACT01,general,Página de recargas / cómo recargar (URL a confirmar),"YAjuego: tu cuenta esta lista. Recarga por PSE, Bre-B o en un punto YAJUEGO PAGOS: {link} +18. Juega responsable."
+ACT05,general,Guía paso a paso de recarga (URL a confirmar),"YAjuego: te mostramos como hacer tu primera recarga, en linea o en un punto YAJUEGO PAGOS: {link} +18. Juega responsable."
+ONB02,general,Agenda deportiva + acceso a recargas,"YAjuego: revisa los partidos de esta semana y recarga cuando quieras: {link} +18. Juega responsable."
+XS03,general,Home de deportes (sports.yajuego.co),"YAjuego: ¿ya viste deportes? Apuesta antes o durante el partido. Mira la agenda: {link} +18. Juega responsable."
+RET04,general,Home de deportes,"YAjuego: hace unos dias no te vemos. La agenda deportiva de hoy ya esta disponible: {link} +18. Juega responsable."
+RET04,en_vivo,Sección En Vivo,"YAjuego: hoy hay partidos para seguir en vivo. Mira la agenda y las cuotas en tiempo real: {link} +18. Juega responsable."
+RET04,prepartido,Agenda prepartido de la fecha,"YAjuego: ya esta la agenda de la fecha. Revisa los partidos y arma tu jugada con tiempo: {link} +18. Juega responsable."
+REC06,general,Home de deportes,"YAjuego: te extrañamos. Revisa la agenda deportiva de esta semana: {link} +18. Juega responsable."
+REC06,en_vivo,Sección En Vivo,"YAjuego: te extrañamos. Esta semana hay partidos para seguir en vivo: {link} +18. Juega responsable."
+REC06,prepartido,Agenda prepartido,"YAjuego: te extrañamos. Ya esta la agenda de partidos de esta semana: {link} +18. Juega responsable."
