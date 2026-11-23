@@ -718,6 +718,24 @@ ICON = {  # trazos simples, 16x16
 }
 
 
+# Módulos que existen en el código pero no se muestran en la app del cliente.
+# Modelo y Diccionario son documentación técnica (docs/ y reports/diccionario_datos.csv);
+# Plan era un cronograma, no una función del software.
+MODULOS_OCULTOS = {"modelo", "diccionario", "plan"}
+REDIRIGIR = {"plan": "campanas", "modelo": "datos", "diccionario": "datos"}
+
+
+def ocultar_modulos(html_txt):
+    """Quita del HTML las vistas ocultas y apunta sus enlaces a un módulo visible."""
+    for k in MODULOS_OCULTOS:
+        i = html_txt.find(f'<section class="view" id="v-{k}"')
+        if i >= 0:
+            j = min(x for x in (html_txt.find('<section class="view"', i + 10), html_txt.find("</main>", i)) if x > 0)
+            html_txt = html_txt[:i] + html_txt[j:]
+        html_txt = html_txt.replace(f'href="#{k}"', f'href="#{REDIRIGIR[k]}"')
+    return html_txt
+
+
 def icon(k):
     return f'<i aria-hidden="true"><svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">{ICON[k]}</svg></i>'
 
@@ -959,9 +977,10 @@ JS = r"""
   calc();
 
   // Diccionario con búsqueda
-  const dicc = DATA.dicc, tb = document.getElementById('dicc-body'), q = document.getElementById('dicc-q');
-  let tabla = 'todas';
+  const dicc = DATA.dicc || [], tb = document.getElementById('dicc-body'), q = document.getElementById('dicc-q');
   const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  if (tb && q) {
+  let tabla = 'todas';
   function renderDicc(){
     const t = q.value.trim().toLowerCase();
     const rows = dicc.filter(r => (tabla === 'todas' || r.tabla.startsWith(tabla)) &&
@@ -977,6 +996,7 @@ JS = r"""
     renderDicc();
   }));
   renderDicc();
+  }
 
   // Controles con filtro
   const cb = document.getElementById('ctrl-body');
@@ -1379,7 +1399,7 @@ def construir_html(D):
 
     data_json = json.dumps({
         "cubo": D["cubo"].to_dict(orient="records"),
-        "dicc": D["dicc"][["tabla", "campo", "tipo", "definicion", "origen", "formula"]].to_dict(orient="records"),
+        "dicc": [] if "diccionario" in MODULOS_OCULTOS else D["dicc"][["tabla", "campo", "tipo", "definicion", "origen", "formula"]].to_dict(orient="records"),
         "ctrl": D["ctrl"].fillna("").astype(str).to_dict(orient="records"),
         "camps": camps_js,
     }, ensure_ascii=False).replace("</", "<\\/")
@@ -1391,7 +1411,7 @@ def construir_html(D):
            ("Activación", [("campanas", "send", "Campañas SMS", "6"), ("medicion", "gauge", "Medición", ""), ("plan", "map", "Plan", "")]),
            ("Cuenta", [("ajustes", "cog", "Supuestos y riesgos", "")])]
     nav_html = "".join(f'<div class="grp">{g}</div>' + "".join(
-        f'<a href="#{k}">{icon(ic)}<span>{lbl}</span>{f"<span class=badge>{b}</span>" if b else ""}</a>' for k, ic, lbl, b in its)
+        f'<a href="#{k}">{icon(ic)}<span>{lbl}</span>{f"<span class=badge>{b}</span>" if b else ""}</a>' for k, ic, lbl, b in its if k not in MODULOS_OCULTOS)
         for g, its in nav)
 
     pend = int(cam.seleccionados.sum())
@@ -1700,7 +1720,7 @@ def construir_html(D):
 def main():
     D = cargar_app(cargar())
     out = REPORT_DIR / "informe_yajuego.html"
-    out.write_text(construir_html(D), encoding="utf-8")
+    out.write_text(ocultar_modulos(construir_html(D)), encoding="utf-8")
     print(f"[ok] app: {out} ({out.stat().st_size / 1024:.0f} KB)")
 
 
