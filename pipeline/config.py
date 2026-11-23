@@ -13,7 +13,7 @@ REPORT_DIR = ROOT / "reports"              # salidas agregadas, sin datos person
 SQL_DIR = ROOT / "sql"
 
 # Fecha de corte explícita: último instante cubierto por segmentos, audiencias y exportes.
-FECHA_CORTE = "2026-11-18 23:59:59"
+FECHA_CORTE = "2026-11-22 23:59:59"
 # Fin del periodo de análisis descriptivo: último mes completo. El análisis base (insights,
 # comparaciones mensuales, embudos) se calcula hasta aquí para no mezclar meses parciales.
 FIN_ANALISIS = "2026-09-30 23:59:59"

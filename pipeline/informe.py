@@ -234,23 +234,16 @@ def mde(p, nt, nc):
 
 
 # ───────────────────────── datos ─────────────────────────
-VISTAS = [("v_recarga", "core.recarga", "fecha_hora"), ("v_apuesta", "core.apuesta", "fecha_hora"),
-          ("v_retiro", "core.retiro", "fecha_ultima_actualizacion"), ("v_registro", "core.registro", "fecha_registro")]
-
-
-def vistas_analisis(con, vistas=VISTAS):
-    """El análisis describe la foto base (último mes completo); los días posteriores van al módulo de seguimiento."""
-    con.execute("SET VARIABLE fin_analisis = (SELECT max(fecha_corte) FROM base.jugador_resumen)")
-    for vista, tabla, col in vistas:
-        con.execute(f"CREATE OR REPLACE TEMP VIEW {vista} AS SELECT * FROM {tabla} WHERE {col} <= getvariable('fin_analisis')")
-
-
 def cargar():
     con = duckdb.connect(str(DB_PATH), read_only=True)
     q = lambda s: con.execute(s).df()  # noqa: E731
     v = lambda s: con.execute(s).fetchall()[0][0]  # noqa: E731
-    vistas_analisis(con)
     D = {}
+    con.execute("SET VARIABLE fin_analisis = (SELECT max(fecha_corte) FROM base.jugador_resumen)")
+    # El análisis describe la ventana hasta el corte; los datos posteriores van al módulo de seguimiento.
+    for vista, tabla, col in [("v_recarga", "core.recarga", "fecha_hora"), ("v_apuesta", "core.apuesta", "fecha_hora"),
+                    ("v_retiro", "core.retiro", "fecha_ultima_actualizacion"), ("v_registro", "core.registro", "fecha_registro")]:
+        con.execute(f"CREATE OR REPLACE TEMP VIEW {vista} AS SELECT * FROM {tabla} WHERE {col} <= getvariable('fin_analisis')")
     D["corte"] = v("SELECT max(fecha_corte) FROM mart.jugador_resumen")
     D["fin_analisis"] = v("SELECT max(fecha_corte) FROM base.jugador_resumen")
     D["universo_base"] = v("SELECT count(*) FROM base.jugador_resumen")
@@ -320,7 +313,9 @@ def cargar():
 def cargar_app(D):
     """Datos adicionales para los módulos interactivos (todos agregados, sin datos personales)."""
     con = duckdb.connect(str(DB_PATH), read_only=True)
-    vistas_analisis(con, VISTAS[:2])
+    con.execute("SET VARIABLE fin_analisis = (SELECT max(fecha_corte) FROM base.jugador_resumen)")
+    for vista, tabla, col in [("v_recarga", "core.recarga", "fecha_hora"), ("v_apuesta", "core.apuesta", "fecha_hora")]:
+        con.execute(f"CREATE OR REPLACE TEMP VIEW {vista} AS SELECT * FROM {tabla} WHERE {col} <= getvariable('fin_analisis')")
     D["cubo"] = con.execute("""
         SELECT s.ciclo_vida AS cv, s.nivel_valor AS nv, s.pref_modalidad AS pm,
                s.estado_contacto AS ec, s.senal_revision_juego_responsable::INT AS jr,
@@ -367,7 +362,9 @@ def cargar_app(D):
     # Seguimiento posterior al corte (datos parciales que llegan después)
     D["post"] = con.execute("""
         SELECT fuente, archivo, filas, periodo_min desde, periodo_max hasta, periodo_min::DATE dia
-        FROM meta.manifiesto WHERE estado='cargado' AND periodo_min > getvariable('fin_analisis') ORDER BY dia, fuente""").df()
+        FROM meta.manifiesto WHERE estado='cargado' AND periodo_max > getvariable('fin_analisis') ORDER BY desde, fuente""").df()
+    # Inicio de los datos de casino: la hipótesis de casino solo se mide en días que tienen casino.
+    con.execute("SET VARIABLE cas_desde = (SELECT min(fecha_hora)::DATE::TIMESTAMP FROM core.casino)")
     O = """(SELECT player_id, max(r) r, max(a) a, max(k) k FROM (
         SELECT player_id, 1 r, 0 a, 0 k FROM core.recarga WHERE fecha_hora > getvariable('fin_analisis')
         UNION ALL SELECT player_id, 0, 1, 0 FROM core.apuesta WHERE fecha_hora > getvariable('fin_analisis')
@@ -380,7 +377,7 @@ def cargar_app(D):
         SELECT CASE WHEN rec_n>0 AND apu_n>0 THEN 'Recarga y apuesta' WHEN rec_n>0 THEN 'Solo recarga'
                     WHEN apu_n>0 THEN 'Solo apuesta' ELSE 'Sin actividad' END perfil,
                count(*) jug, sum((o.player_id IS NOT NULL)::INT) act, sum(coalesce(o.k,0)) cas, sum(coalesce(o.a,0)) dep
-        FROM base.jugador_resumen j LEFT JOIN {O} o USING (player_id) GROUP BY 1 ORDER BY 2 DESC""").df()
+        FROM base.jugador_resumen j LEFT JOIN {O.replace("getvariable('fin_analisis')", "getvariable('cas_desde')")} o USING (player_id) GROUP BY 1 ORDER BY 2 DESC""").df()
     D["post_nuevos"] = con.execute(f"SELECT count(*) FROM {O} o WHERE player_id NOT IN (SELECT player_id FROM base.jugador_resumen)").fetchall()[0][0]
     D["cas"] = con.execute("""SELECT count(*) rondas, count(DISTINCT player_id) jug, sum(monto_apostado) ap, sum(monto_ganado) pg,
         median(monto_apostado) med, count(DISTINCT juego) juegos, min(fecha_hora)::DATE d0, max(fecha_hora)::DATE d1 FROM core.casino""").df().iloc[0]
@@ -393,24 +390,16 @@ def cargar_app(D):
     D["cas_top"] = con.execute("""WITH g AS (SELECT player_id, sum(monto_apostado) m FROM core.casino GROUP BY 1),
         r AS (SELECT m, ntile(100) OVER (ORDER BY m DESC) p FROM g)
         SELECT 100*sum(m) FILTER (WHERE p=1)/sum(m) t1, 100*sum(m) FILTER (WHERE p<=10)/sum(m) t10 FROM r""").df().iloc[0]
-    D["post_dia"] = con.execute("""
-        WITH dias AS (SELECT DISTINCT periodo_min::DATE d FROM meta.manifiesto WHERE estado='cargado' AND periodo_min > getvariable('fin_analisis')),
-        trunc AS (SELECT periodo_min::DATE d, fuente FROM meta.manifiesto WHERE estado='cargado' AND periodo_min > getvariable('fin_analisis')
-                  AND (periodo_min::TIME > TIME '01:00:00' OR periodo_max::TIME < TIME '23:00:00')),
-        r AS (SELECT fecha_hora::DATE d, count(*) n, sum(monto) m, count(DISTINCT player_id) j FROM core.recarga GROUP BY 1),
-        a AS (SELECT fecha_hora::DATE d, count(*) n, sum(monto_apostado) m, count(DISTINCT player_id) j FROM core.apuesta GROUP BY 1),
-        c AS (SELECT fecha_hora::DATE d, count(*) n, sum(monto_apostado) m, count(DISTINCT player_id) j FROM core.casino GROUP BY 1),
-        rs AS (SELECT isodow(d) w, avg(n) n, avg(m) m, avg(j) j FROM r WHERE month(d) = 9 GROUP BY 1),
-        as_ AS (SELECT isodow(d) w, avg(n) n, avg(m) m, avg(j) j FROM a WHERE month(d) = 9 GROUP BY 1)
-        SELECT dias.d, 'Recargas' f, r.n n1, rs.n n0, r.m m1, rs.m m0, r.j j1, rs.j j0,
-               EXISTS (SELECT 1 FROM trunc t WHERE t.d = dias.d AND t.fuente = 'recargas') incompleto
-        FROM dias LEFT JOIN r USING (d) LEFT JOIN rs ON rs.w = isodow(dias.d)
-        UNION ALL
-        SELECT dias.d, 'Apuestas deportivas', a.n, as_.n, a.m, as_.m, a.j, as_.j,
-               EXISTS (SELECT 1 FROM trunc t WHERE t.d = dias.d AND t.fuente = 'apuestas')
-        FROM dias LEFT JOIN a USING (d) LEFT JOIN as_ ON as_.w = isodow(dias.d)
-        UNION ALL
-        SELECT dias.d, 'Casino', c.n, NULL, c.m, NULL, c.j, NULL, false FROM dias LEFT JOIN c USING (d)
+    D["dia_fuente"] = con.execute("""
+        SELECT fecha_registro::DATE d, 'registros' fuente, count(*) n, NULL::DOUBLE m, count(*) j FROM core.registro
+            WHERE fecha_registro >= '2026-09-01' GROUP BY 1
+        UNION ALL SELECT fecha_hora::DATE, 'recargas', count(*), sum(monto), count(DISTINCT player_id) FROM core.recarga
+            WHERE fecha_hora >= '2026-09-01' GROUP BY 1
+        UNION ALL SELECT fecha_hora::DATE, 'apuestas', count(*), sum(monto_apostado), count(DISTINCT player_id) FROM core.apuesta
+            WHERE fecha_hora >= '2026-09-01' GROUP BY 1
+        UNION ALL SELECT fecha_hora::DATE, 'casino', count(*), sum(monto_apostado), count(DISTINCT player_id) FROM core.casino GROUP BY 1
+        UNION ALL SELECT fecha_ultima_actualizacion::DATE, 'retiros', count(*), sum(monto_neto), count(DISTINCT player_id) FROM core.retiro
+            WHERE fecha_ultima_actualizacion >= '2026-09-01' GROUP BY 1
         ORDER BY 1, 2""").df()
     con.close()
     return D
@@ -812,7 +801,7 @@ VISTAS_ACTIVACION = r"""<section class="view" id="v-campanas" data-title="Campa�
   <section class="panel ask"><div class="ph"><h2>Lo que necesitamos de YAjuego esta semana</h2><span class="sub">Bloquea el primer envío</span></div><div class="pb flush"><div class="list">
     <div class="li"><span class="ic crit">1</span><div><b>Lista de consentimiento, autoexclusión y bloqueos</b><span>Cumplimiento · sin ella ninguna audiencia se activa</span></div><span class="pill crit">Bloqueante</span></div>
     <div class="li"><span class="ic crit">2</span><div><b>Aprobación de copies, leyenda +18 y texto de baja</b><span>Legal y CRM</span></div><span class="pill crit">Bloqueante</span></div>
-    <div class="li"><span class="ic warn">3</span><div><b>Días faltantes con el export de solicitudes</b><span>Tecnología · 1 al 28-oct, 30-oct, 9-nov y deportes del 11 y 13-nov</span></div><span class="pill warn">Mejora segmentos</span></div>
+    <div class="li"><span class="ic warn">3</span><div><b>Días faltantes con el export de solicitudes</b><span>Tecnología · casino 1-27 oct, 26 y 27-oct, 9-nov y deportes del 11 y 13-nov</span></div><span class="pill warn">Mejora segmentos</span></div>
     <div class="li"><span class="ic warn">4</span><div><b>Enlaces de destino, acortador con UTM y tarifa por SMS</b><span>CRM y proveedor SMS</span></div><span class="pill warn">Necesario para medir</span></div>
     <div class="li"><span class="ic acc">5</span><div><b>Significado de códigos de estado de cuenta y Live = 2</b><span>Tecnología</span></div><span class="pill neu">Validación</span></div>
   </div></div></section>
@@ -1146,56 +1135,109 @@ def construir_html(D):
     pp = D["post_perfil"].set_index("perfil")
     sr = pp.loc["Solo recarga"]
     pct_sr_cas = 100 * sr.cas / sr.act if sr.act else 0
-    pdia = D["post_dia"]
     MESES = {9: "sep", 10: "oct", 11: "nov", 12: "dic"}
     DIAS_SEM = {1: "lun", 2: "mar", 3: "mié", 4: "jue", 5: "vie", 6: "sáb", 7: "dom"}
     # Festivos de Colombia en el periodo de seguimiento (Ley Emiliani): cambian el patrón frente al mismo día de la semana.
     FESTIVOS = {pd.Timestamp("2026-10-12").date(), pd.Timestamp("2026-11-02").date(), pd.Timestamp("2026-11-16").date()}
+    fd = lambda d: f"{d.day}-{MESES.get(d.month, d.month)}"  # noqa: E731
     fdia = lambda d: (f'<span style="white-space:nowrap">{DIAS_SEM[d.isoweekday()]} {d.day}-{MESES.get(d.month, d.month)}'  # noqa: E731
                       + (' · festivo' if pd.Timestamp(d).date() in FESTIVOS else '') + '</span>')
-    dias_post = sorted(pd.to_datetime(post.dia).dt.date.unique())
-    dias_txt = (", ".join(f"{d.day}-{MESES[d.month]}" for d in dias_post[:-1]) + f" y {dias_post[-1].day}-{MESES[dias_post[-1].month]}"
-                if len(dias_post) > 1 else (f"{dias_post[0].day}-{MESES[dias_post[0].month]}" if dias_post else "—"))
 
-    dias_txt_corto = (f"{len(dias_post)} días entre el {dias_post[0].day}-{MESES[dias_post[0].month]} y el {dias_post[-1].day}-{MESES[dias_post[-1].month]}"
-                      if dias_post else "—")
+    # Cobertura día x fuente según el periodo real de cada archivo (un archivo puede cubrir un día o un rango).
+    # Un día está completo si los archivos de esa fuente cubren de 01:00 a 23:00; recortado si lo cubren en parte.
+    FUENTES = ["registros", "recargas", "apuestas", "casino", "retiros"]
+    fin = pd.Timestamp(D["fin_analisis"])
+    tramos = {}
+    for f in FUENTES:
+        iv = sorted((r.desde, r.hasta) for r in post.itertuples() if r.fuente == f)
+        merged = []
+        for a, b in iv:
+            if merged and a <= merged[-1][1] + pd.Timedelta(hours=1):
+                merged[-1][1] = max(merged[-1][1], b)
+            else:
+                merged.append([a, b])
+        tramos[f] = merged
+    df_dia = D["dia_fuente"].copy()
+    df_dia["d"] = pd.to_datetime(df_dia.d).dt.date
+    cnt = df_dia.set_index(["d", "fuente"])
+    ultimo = max(b for f in FUENTES for _, b in tramos[f]).date() if len(post) else fin.date()
+    rango = list(pd.date_range((fin + pd.Timedelta(days=1)).normalize(), ultimo).date)
+    estado = {}
+    for d in rango:
+        d0, d1 = pd.Timestamp(d), pd.Timestamp(d) + pd.Timedelta(days=1)
+        for f in FUENTES:
+            st = "falta"
+            for a, b in tramos[f]:
+                if a <= d0 + pd.Timedelta(hours=1) and b >= d0 + pd.Timedelta(hours=23):
+                    st = "ok"
+                    break
+                if a < d1 and b >= d0:
+                    st = "rec"
+            estado[(d, f)] = st
+    dias_post = [d for d in rango if any(estado[(d, f)] != "falta" for f in FUENTES)]
+    dias_sin = [d for d in rango if all(estado[(d, f)] == "falta" for f in FUENTES)]
+    n_rec = sum(v == "rec" for v in estado.values())
+    n_falta = sum(v == "falta" for v in estado.values()) - 5 * len(dias_sin)
+    cas_d0, cas_d1 = pd.Timestamp(cas.d0).date(), pd.Timestamp(cas.d1).date()
+    dias_cas = sum(estado[(d, "casino")] == "ok" for d in rango)
+    dias_txt_corto = f"{len(dias_post)} días con datos entre el {fd(rango[0])} y el {fd(ultimo)}" if rango else "—"
+    cas_txt = f"{dias_cas} días con casino, del {fd(cas_d0)} al {fd(cas_d1)}"
+    sin_txt = (", ".join(fd(d) for d in dias_sin[:-1]) + (" y " if len(dias_sin) > 1 else "") + fd(dias_sin[-1])) if dias_sin else ""
+
+    def tot(fuente, campo="m", solo_ok=True):
+        x = [cnt.loc[(d, fuente)][campo] for d in rango if (d, fuente) in cnt.index and (not solo_ok or estado[(d, fuente)] == "ok")]
+        return float(np.nansum(x)) if x else 0.0
+
+    # Tabla de cobertura: días consecutivos con el mismo estado se agrupan en un tramo.
+    def celda(d_ini, d_fin, f):
+        st = estado[(d_ini, f)]
+        filas_t = int(sum(cnt.loc[(d, f)].n for d in pd.date_range(d_ini, d_fin).date if (d, f) in cnt.index))
+        if st == "falta":
+            return '<td><span class="pill neu">Falta</span></td>'
+        if st == "rec":
+            return f'<td><span class="pill crit">{n(filas_t)} · parcial</span></td>'
+        return f'<td><span class="pill ok">{n(filas_t)}</span></td>'
+    grupos = []
+    for d in rango:
+        firma = tuple(estado[(d, f)] for f in FUENTES)
+        unico = "rec" in firma or d in FESTIVOS
+        if grupos and grupos[-1][2] == firma and not unico and not grupos[-1][3]:
+            grupos[-1][1] = d
+        else:
+            grupos.append([d, d, firma, unico])
+    post_rows = ""
+    for a, b, firma, _ in grupos:
+        lbl = fdia(pd.Timestamp(a)) if a == b else f'<span style="white-space:nowrap">{fd(a)} al {fd(b)}</span> <span class="muted small">· {(b - a).days + 1} días</span>'
+        post_rows += f"<tr><td>{lbl}</td>{''.join(celda(a, b, f) for f in FUENTES)}</tr>"
+
+    # Comparación semanal contra septiembre: cada día se compara con el promedio del mismo día de la semana en septiembre.
+    sep = df_dia[(pd.to_datetime(df_dia.d).dt.month == 9)].copy()
+    sep["w"] = pd.to_datetime(sep.d).dt.weekday + 1
+    base_w = sep.groupby(["fuente", "w"])[["n", "m", "j"]].mean()
 
     def var(a, b):
         return "—" if (a is None or b is None or pd.isna(a) or pd.isna(b) or not b) else f"{'+' if a >= b else ''}{n(100 * (a / b - 1), 0)} %"
     filas_pd = []
-    for r in pdia.itertuples():
-        inc = bool(r.incompleto)
-        filas_pd.append(dict(d=fdia(pd.Timestamp(r.d)), f=r.f,
-                             n1=(f"{n(r.n1)} <span class='pill crit'>recortado</span>" if inc else n(r.n1)),
-                             n0=n(r.n0) if pd.notna(r.n0) else "—", dn="—" if inc else var(r.n1, r.n0),
-                             m1="—" if inc else mm(r.m1), m0=mm(r.m0) if pd.notna(r.m0) else "—", dm="—" if inc else var(r.m1, r.m0),
-                             j1="—" if inc else n(r.j1), j0=n(r.j0) if pd.notna(r.j0) else "—"))
-    t_pd = table(pd.DataFrame(filas_pd), [("d", "Día"), ("f", "Producto"), ("n1", "Operaciones"), ("n0", "Mismo día sep (prom.)"), ("dn", "Var."),
-                                          ("m1", "Monto"), ("m0", "Mismo día sep (prom.)"), ("dm", "Var."), ("j1", "Jugadores"), ("j0", "Mismo día sep")],
-                 num=("n1", "n0", "dn", "m1", "m0", "dm", "j1", "j0"), cls="wide")
+    semanas = {}
+    for d in rango:
+        semanas.setdefault(pd.Timestamp(d) - pd.Timedelta(days=pd.Timestamp(d).weekday()), []).append(d)
+    for lunes, ds in semanas.items():
+        fila = {"sem": f'<span style="white-space:nowrap">{fd(ds[0])} al {fd(ds[-1])}</span>'
+                       + (' <span class="muted small">· festivo</span>' if any(d in FESTIVOS for d in ds) else '')}
+        for f, k in [("apuestas", "dep"), ("recargas", "rec"), ("casino", "cas")]:
+            ok = [d for d in ds if estado[(d, f)] == "ok" and (d, f) in cnt.index]
+            m1 = sum(cnt.loc[(d, f)].m for d in ok)
+            m0 = sum(base_w.loc[(f, d.isoweekday())].m for d in ok if (f, d.isoweekday()) in base_w.index)
+            fila[k + "_m"] = (f'{mm(m1)} <span class="muted small">· {len(ok)} de {len(ds)} días</span>' if ok else "—")
+            fila[k + "_v"] = var(m1, m0) if ok and m0 else "—"
+        filas_pd.append(fila)
+    t_pd = table(pd.DataFrame(filas_pd), [("sem", "Semana"), ("dep_m", "Deportes: apostado"), ("dep_v", "vs sep"),
+                                          ("rec_m", "Recargado"), ("rec_v", "vs sep"), ("cas_m", "Casino: apostado")],
+                 num=("dep_m", "dep_v", "rec_m", "rec_v", "cas_m"), cls="wide")
+    dias_ambos = [d for d in rango if estado[(d, "casino")] == "ok" and estado[(d, "apuestas")] == "ok"]
+    dep_mismos = sum(cnt.loc[(d, "apuestas")].m for d in dias_ambos if (d, "apuestas") in cnt.index)
     cb = D["cas_base"].set_index("g").n
     FUENTE_LBL = {"apuestas": "Apuestas deportivas", "casino": "Casino", "recargas": "Recargas", "registros": "Registros", "retiros": "Retiros"}
-    # Matriz día x fuente: completo, recortado o faltante (incluye días sin ningún archivo).
-    FUENTES = ["registros", "recargas", "apuestas", "casino", "retiros"]
-    cel = {}
-    for r in post.itertuples():
-        recortado = r.desde.time() > dt_time(1, 0) or r.hasta.time() < dt_time(23, 0)
-        cel[(pd.Timestamp(r.dia).date(), r.fuente)] = (recortado, r.filas, r.desde, r.hasta)
-    rango = pd.date_range(min(dias_post), max(dias_post)).date if dias_post else []
-    post_rows = ""
-    n_falta = 0
-    for d in rango:
-        tds = ""
-        for f in FUENTES:
-            if (d, f) not in cel:
-                n_falta += 1
-                tds += '<td><span class="pill neu">Falta</span></td>'
-            else:
-                recortado, filas, a, b = cel[(d, f)]
-                tds += (f'<td><span class="pill crit" title="{a:%H:%M}-{b:%H:%M}">{n(filas)} · {a:%H:%M}-{b:%H:%M}</span></td>' if recortado
-                        else f'<td><span class="pill ok">{n(filas)}</span></td>')
-        post_rows += f"<tr><td>{fdia(pd.Timestamp(d))}</td>{tds}</tr>"
-    n_rec = int(sum(a.time() > dt_time(1, 0) or b.time() < dt_time(23, 0) for a, b in zip(post.desde, post.hasta)))
 
     # ---------- tablas ----------
     man = D["manifiesto"].copy()
@@ -1242,9 +1284,9 @@ def construir_html(D):
         ("3_activo", f"Última recarga, apuesta o ronda de casino hace ≤ {int(P['dias_activo_max'])} días",
          "14 días ≈ p85 del intervalo entre días de apuesta. 95 % sin teléfono en los archivos.", "Solo mensajes de servicio", "Semanal", "Alta"),
         ("4_enfriandose", f"Última actividad hace {int(P['dias_activo_max']) + 1}-{int(P['dias_enfriando_max'])} días",
-         "28 % vuelve solo en 14 días (corte simulado al 31-ago).", "Recordatorio con agenda deportiva", "Semanal", "Baja hasta tener 1-28 oct"),
-        ("5_inactivo_31_60", "Última actividad hace 31-60 días", "17 % vuelve solo en 14 días.", "Recuperación según preferencia", "Mensual", "Baja hasta tener 1-28 oct"),
-        ("6_inactivo_61_mas", "Última actividad hace más de 60 días", "Incluye a quien solo jugó entre el 1 y el 28-oct, días sin datos.", "No contactar hasta completar octubre", "Mensual", "Baja"),
+         "28 % vuelve solo en 14 días (corte simulado al 31-ago).", "Recordatorio con agenda deportiva", "Semanal", "Media: falta casino 1-27 oct"),
+        ("5_inactivo_31_60", "Última actividad hace 31-60 días", "17 % vuelve solo en 14 días.", "Recuperación según preferencia", "Mensual", "Media: falta casino 1-27 oct"),
+        ("6_inactivo_61_mas", "Última actividad hace más de 60 días", "Puede incluir a quien solo jugó casino antes del 28-oct (sin datos de casino).", "No contactar hasta tener casino de octubre", "Mensual", "Baja"),
         ("7_sin_actividad_de_juego_observada", "Solo aparece en Retiros", "Retiró sin recargar ni apostar en deportes.", "Ninguna", "Mensual", "Baja"),
     ]
     cvi = cv.set_index("ciclo_vida")
@@ -1436,25 +1478,25 @@ def construir_html(D):
   <header class="top">
     <div class="crumb">YAjuego <span>/</span> <b id="crumb-view">Inicio</b></div>
     <div class="status">
-      <span class="chip ok">Datos hasta {dias_post[-1]:%d-%m-%Y}</span>
+      <span class="chip ok">Datos hasta {ultimo:%d-%m-%Y}</span>
       <span class="chip warn">Segmentos y campañas al {corte:%d-%m-%Y}</span>
       <span class="chip ok">{n_ctrl} controles · {fallas} fallas</span>
       <span class="chip warn">Consentimiento pendiente</span>
-      <span class="chip warn">Oct-nov: {len(dias_post)} días sueltos</span>
+      <span class="chip warn">Casino desde el {fd(cas_d0)}</span>
     </div>
   </header>
   <main class="content">
 
 <section class="view" id="v-inicio" data-title="Inicio">
-  <div class="vhead"><div><h1>Resumen del espacio de trabajo</h1><p>Registros, recargas, apuestas deportivas, retiros y casino consolidados en una sola base. Segmentos y campañas al corte del {corte:%d-%m-%Y}; seguimiento diario hasta el {dias_post[-1].day}-{MESES[dias_post[-1].month]}.</p></div><span class="chip acc">Última actualización de datos: {dias_post[-1]:%d-%m-%Y}</span></div>
-  <section class="panel"><div class="ph"><h2>Seguimiento posterior al corte · {dias_txt_corto}</h2><a class="btn" href="#octubre">Ver detalle</a></div><div class="pb">
+  <div class="vhead"><div><h1>Resumen del espacio de trabajo</h1><p>Registros, recargas, apuestas deportivas, retiros y casino consolidados en una sola base. Segmentos, audiencias y campañas al {corte:%d-%m-%Y}. Análisis descriptivo sobre jul-sep, los últimos meses completos.</p></div><span class="chip acc">Última actualización de datos: {ultimo:%d-%m-%Y}</span></div>
+  <section class="panel"><div class="ph"><h2>Octubre y noviembre · {dias_txt_corto}</h2><a class="btn" href="#octubre">Ver detalle</a></div><div class="pb">
     <div class="g g4">
-      {tile('Casino', mm(cas.ap), f"{n(cas.rondas)} rondas · {n(cas.jug)} jugadores", acc=True)}
-      {tile('Deportes', mm(pdia[pdia.f == 'Apuestas deportivas'].m1.sum()), f"{n(pdia[pdia.f == 'Apuestas deportivas'].n1.sum())} apuestas en días con archivo")}
-      {tile('Recargas', mm(pdia[(pdia.f == 'Recargas') & (~pdia.incompleto.astype(bool))].m1.sum()), 'Solo días completos')}
+      {tile('Casino', mm(cas.ap), f"{n(cas.rondas)} rondas · {n(cas.jug)} jugadores · desde el {fd(cas_d0)}", acc=True)}
+      {tile('Deportes', mm(tot('apuestas')), f"{n(tot('apuestas', 'n'))} apuestas en días completos")}
+      {tile('Recargas', mm(tot('recargas')), f"{n(tot('recargas', 'n'))} recargas en días completos")}
       {tile('Hipótesis de casino', f"{n(pct_sr_cas, 0)}<small> %</small>", 'de los "solo recarga" activos jugó casino')}
     </div>
-    <p class="small muted">Archivos diarios: {n_rec} recortados y {n_falta} combinaciones de día y fuente sin archivo. Para mover el corte de segmentos y campañas se necesita el mes completo de octubre.</p>
+    <p class="small muted">Del 1 al 25-oct llegaron registros, recargas, apuestas deportivas y retiros completos; casino llega desde el {fd(cas_d0)}. {('Sin ningún archivo: ' + sin_txt + '. ') if sin_txt else ''}{n_rec} combinaciones de día y fuente vienen parciales y {n_falta} faltan.</p>
   </div></section>
   <div class="g g4">
     {tile('Jugadores con perfil', n(D['universo']), f"Al {corte:%d-%m-%Y} · incluye casino")}
@@ -1467,9 +1509,9 @@ def construir_html(D):
     <section class="panel"><div class="ph"><h2>Alertas</h2><span class="sub">Lo que bloquea o limita la operación</span></div><div class="pb flush"><div class="list">
       <div class="li"><span class="ic crit">!</span><div><b>Base histórica sin teléfono</b><span>{n(hist.j)} jugadores generan el {n(pct_apu_hist, 0)} % del monto apostado y no son contactables con los archivos recibidos.</span></div><a class="btn" href="#ajustes">Ver</a></div>
       <div class="li"><span class="ic crit">!</span><div><b>Consentimiento y autoexclusión</b><span>Ninguna audiencia se activa sin cruzar la lista de supresión.</span></div><a class="btn" href="#campanas">Ver</a></div>
-      <div class="li"><span class="ic warn">~</span><div><b>Audiencias con más de 3 semanas</b><span>Calculadas al {corte:%d-%m-%Y}; recalcular con octubre antes de enviar.</span></div><a class="btn" href="#plan">Ver</a></div>
-      <div class="li"><span class="ic crit">!</span><div><b>Octubre y noviembre llegaron como días sueltos</b><span>Hay datos de {dias_txt_corto}; {n_rec} de {len(post)} archivos vienen recortados (solo las últimas horas del día). El corte se mantiene al 30-sep.</span></div><a class="btn" href="#octubre">Ver</a></div>
-      <div class="li"><span class="ic acc">i</span><div><b>Casino confirma la hipótesis</b><span>{n(pct_sr_cas, 0)} % de los "solo recarga" activos después del corte jugó casino.</span></div><a class="btn" href="#octubre">Ver</a></div>
+      <div class="li"><span class="ic ok">✓</span><div><b>Audiencias recalculadas al {corte:%d-%m-%Y}</b><span>Incluyen casino y los días disponibles de octubre y noviembre.</span></div><a class="btn" href="#plan">Ver</a></div>
+      <div class="li"><span class="ic crit">!</span><div><b>Huecos en octubre y noviembre</b><span>{('Sin ningún archivo el ' + sin_txt + '; ') if sin_txt else ''}casino solo desde el {fd(cas_d0)}; {n_rec} combinaciones de día y fuente vienen parciales. Quien solo jugó casino antes del {fd(cas_d0)} puede aparecer como inactivo.</span></div><a class="btn" href="#octubre">Ver</a></div>
+      <div class="li"><span class="ic acc">i</span><div><b>Casino confirma la hipótesis</b><span>{n(pct_sr_cas, 0)} % de los "solo recarga" activos desde el {fd(cas_d0)} jugó casino.</span></div><a class="btn" href="#octubre">Ver</a></div>
       <div class="li"><span class="ic ok">✓</span><div><b>Conciliación completa</b><span>{n_ctrl} controles entre origen, base y audiencias; {fallas} diferencias.</span></div><a class="btn" href="#datos">Ver</a></div>
     </div></div></section>
   </div>
@@ -1487,7 +1529,7 @@ def construir_html(D):
     {tile('Archivos recibidos', n(D['n_archivos']), f"{n(D['n_cargados'])} cargados · 1 copia idéntica omitida")}
     {tile('Filas cargadas', n(rec.n + D['lin'] + retd.n + D['reg']), 'Registros, recargas, líneas de apuesta y retiros')}
     {tile('Controles', f"{n_ctrl}", f"{fallas} fallas", acc=True)}
-    {tile('Casino', n(cas.rondas), f"Rondas de {len(dias_post)} días sueltos")}
+    {tile('Casino', n(cas.rondas), f"Rondas desde el {fd(cas_d0)}")}
   </div>
   <section class="panel"><div class="ph"><h2>Historial de cargas</h2><span class="sub">meta.manifiesto</span></div><div class="pb flush"><div class="tw">{t_man.replace('<div class="tw">', '').replace('</table></div>', '</table>')}</div></div></section>
   <section class="panel"><div class="ph"><h2>Controles de conciliación</h2>
@@ -1502,7 +1544,7 @@ def construir_html(D):
     <section class="panel"><div class="ph"><h2>Validar con YAjuego</h2><span class="pill neu">Abierto</span></div><div class="pb small"><ul style="margin:0;padding-left:18px;display:grid;gap:4px">
       <li>Códigos de estado de cuenta (solo 1 = activa)</li><li>KYC, fuente de registro, red 601/602</li><li><code>Live = 2</code> como combinada mixta</li><li>Zona horaria (perfil indica hora Colombia)</li></ul></div></section>
     <section class="panel"><div class="ph"><h2>No disponible</h2><span class="pill crit">Falta</span></div><div class="pb small"><ul style="margin:0;padding-left:18px;display:grid;gap:4px">
-      <li>Octubre completo (solo días sueltos)</li><li>Contacto de la base anterior a julio</li><li>Deporte, liga, evento, mercado</li><li>GGR/NGR y pérdida por jugador</li><li>Operaciones fallidas o anuladas</li><li>Consentimiento y autoexclusión</li></ul></div></section>
+      <li>Casino antes del {fd(cas_d0)}{(' y todo el ' + sin_txt) if sin_txt else ''}</li><li>Contacto de la base anterior a julio</li><li>Deporte, liga, evento, mercado</li><li>GGR/NGR y pérdida por jugador</li><li>Operaciones fallidas o anuladas</li><li>Consentimiento y autoexclusión</li></ul></div></section>
   </div>
 </section>
 
@@ -1545,7 +1587,7 @@ def construir_html(D):
 </section>
 
 <section class="view" id="v-jugadores" data-title="Jugadores">
-  <div class="vhead"><div><h1>Jugadores</h1><p>Los {n(tot_j)} jugadores son todos los que aparecen en al menos un archivo entre jul y sep. Cada uno tiene un perfil con más de 100 indicadores al corte; aquí se agrupan por la actividad que tuvieron.</p></div></div>
+  <div class="vhead"><div><h1>Jugadores</h1><p>Foto del análisis base al {fin:%d-%m-%Y}. Los {n(tot_j)} jugadores son todos los que existían al {fin:%d-%m-%Y}: vistos en algún archivo de jul-sep o registrados antes según los retiros posteriores. Cada uno tiene un perfil con más de 100 indicadores al corte; aquí se agrupan por la actividad que tuvieron.</p></div></div>
   <div class="g g4">
     {tile('Jugadores con perfil', n(tot_j), 'Vistos en registros, recargas, apuestas o retiros')}
     {tile('Recargan y apuestan', n(activos_rec_apu), f"{n(100 * activos_rec_apu / tot_j, 1)} % · concentran casi toda la actividad", acc=True)}
@@ -1564,7 +1606,7 @@ def construir_html(D):
 </section>
 
 <section class="view" id="v-insights" data-title="Insights">
-  <div class="vhead"><div><h1>Insights</h1><p>Cada tarjeta separa el dato observado de su lectura. Los archivos muestran qué pasó; no demuestran por qué.</p></div></div>
+  <div class="vhead"><div><h1>Insights</h1><p>Análisis base sobre jul-sep, los últimos meses completos. Cada tarjeta separa el dato observado de su lectura. Los archivos muestran qué pasó; no demuestran por qué.</p></div></div>
   {insight("Quienes generan el volumen no son quienes podemos contactar", f"{n(pct_apu_hist, 0)} %", "del monto apostado viene de la base sin teléfono",
            f"{n(reg_tot.j)} registrados jul-sep traen teléfono; {n(hist.j)} registrados antes solo aparecen en transacciones.",
            f"De los activos de la última semana, {n(rc.sin_datos_contacto.iloc[0])} son de la base histórica y {n(rc.con_datos_contacto.iloc[0])} registrados recientes.",
@@ -1609,7 +1651,7 @@ def construir_html(D):
 </section>
 
 <section class="view" id="v-segmentos" data-title="Segmentos">
-  <div class="vhead"><div><h1>Segmentos</h1><p>Un segmento de ciclo de vida por jugador, asignado en orden de prioridad. Umbrales derivados de la distribución: 14 días ≈ p85 del intervalo entre días de apuesta.</p></div></div>
+  <div class="vhead"><div><h1>Segmentos</h1><p>Al corte del {corte:%d-%m-%Y}, con casino incluido en la actividad. Casino entra desde el {fd(cas_d0)}: quien solo jugó casino antes de esa fecha puede aparecer como enfriándose o inactivo. Un segmento de ciclo de vida por jugador, asignado en orden de prioridad. Umbrales derivados de la distribución: 14 días ≈ p85 del intervalo entre días de apuesta.</p></div></div>
   <section class="panel"><div class="ph"><h2>Ciclo de vida al corte</h2><span class="sub">mart.segmento_jugador</span></div><div class="pb">{f_cv}</div></section>
   <section class="panel"><div class="ph"><h2>Catálogo de segmentos</h2></div><div class="pb flush">{t_seg}</div></section>
   <section class="panel"><div class="ph"><h2>Etiquetas (hipersegmentos)</h2><span class="sub">Se superponen; la campaña resuelve la prioridad</span></div><div class="pb flush">{t_hip}</div></section>
@@ -1648,23 +1690,23 @@ def construir_html(D):
 </section>
 
 <section class="view" id="v-octubre" data-title="Seguimiento y casino">
-  <div class="vhead"><div><h1>Seguimiento posterior al corte</h1><p>Lectura con los archivos diarios recibidos para {dias_txt_corto}. La segmentación y las audiencias siguen al corte del {corte:%d-%m-%Y}: estos datos se usan para observar qué hicieron después los segmentos, no para recalcularlos.</p></div></div>
-  <section class="panel"><div class="ph"><h2>Cobertura posterior al corte</h2><span class="sub"><span class="pill ok">filas · día completo</span> <span class="pill crit">recortado · horario</span> <span class="pill neu">sin archivo</span></span></div><div class="pb flush"><div class="tw"><table class="wide"><thead><tr><th>Día</th><th>Registros</th><th>Recargas</th><th>Apuestas deportivas</th><th>Casino</th><th>Retiros</th></tr></thead><tbody>{post_rows}</tbody></table></div></div>
-    <div class="pb small muted">Cada archivo cubre un solo día. Los recortados vienen de vistas de lista (PayIns, PayOuts, Clients_List, Bet) que exportan un máximo de filas, solo una parte del día. Hay {n_rec} archivos recortados y {n_falta} combinaciones de día y fuente sin archivo. Dos archivos recibidos no se cargaron: el de deportes del 11-nov traía rondas de casino ya incluidas en el archivo de casino, y el de deportes del 13-nov traía datos del 17-nov de 00:00 a 08:50.</div></section>
+  <div class="vhead"><div><h1>Seguimiento y casino</h1><p>Datos de octubre y noviembre: {dias_txt_corto}. Alimentan segmentos y audiencias al corte del {corte:%d-%m-%Y}; aquí se comparan con la foto base de jul-sep.</p></div></div>
+  <section class="panel"><div class="ph"><h2>Cobertura desde el {fd(rango[0])}</h2><span class="sub"><span class="pill ok">filas · completo</span> <span class="pill crit">parcial</span> <span class="pill neu">sin archivo</span></span></div><div class="pb flush"><div class="tw"><table class="wide"><thead><tr><th>Días</th><th>Registros</th><th>Recargas</th><th>Apuestas deportivas</th><th>Casino</th><th>Retiros</th></tr></thead><tbody>{post_rows}</tbody></table></div></div>
+    <div class="pb small muted">Los días seguidos con la misma cobertura se agrupan. Octubre del 1 al 25 llegó en archivos por rango; desde el 28-oct, en archivos diarios. Un archivo parcial viene de una vista de lista (PayIns, PayOuts, Clients_List, Bet) que exporta un máximo de filas: solo trae las últimas horas del día. Dos archivos recibidos no se cargaron: el de deportes del 11-nov traía rondas de casino ya incluidas en el archivo de casino, y el de deportes del 13-nov traía datos del 17-nov de 00:00 a 08:50.</div></section>
   <div class="g g4">
     {tile('Rondas de casino', n(cas.rondas), f"{n(cas.jug)} jugadores · {n(cas.juegos)} juegos")}
-    {tile('Apostado en casino', mm(cas.ap), f"Deportes en los mismos días: {mm(pdia[pdia.f == 'Apuestas deportivas'].m1.sum())}", acc=True)}
+    {tile('Apostado en casino', mm(cas.ap), f"Deportes en los mismos días: {mm(dep_mismos)}", acc=True)}
     {tile('Pagado al jugador', mm(cas.pg), f"Diferencia {mm(cas.ap - cas.pg)} ({n(100 * (cas.ap - cas.pg) / cas.ap, 1)} %); no es GGR")}
     {tile('Concentración', f"{n(D['cas_top'].t1, 0)}<small> %</small>", f"del monto en el 1 % de jugadores · top 10 %: {n(D['cas_top'].t10, 0)} %")}
   </div>
-  {insight("La hipótesis de casino se confirma", f"{n(pct_sr_cas, 0)} %", "de los 'solo recarga' activos después del corte jugó casino",
-           f"De los {n(sr.jug)} jugadores que en jul-sep recargaron sin apostar en deportes, {n(sr.act)} tuvieron actividad en esos {len(dias_post)} días y {n(sr.cas)} de ellos jugaron casino; solo {n(sr.dep)} apostaron en deportes.",
-           f"{len(dias_post)} días sueltos de casino; la proporción puede variar con el mes completo.",
+  {insight("La hipótesis de casino se confirma", f"{n(pct_sr_cas, 0)} %", f"de los 'solo recarga' activos desde el {fd(cas_d0)} jugó casino",
+           f"De los {n(sr.jug)} jugadores que en jul-sep recargaron sin apostar en deportes, {n(sr.act)} tuvieron actividad desde el {fd(cas_d0)} y {n(sr.cas)} de ellos jugaron casino; solo {n(sr.dep)} apostaron en deportes.",
+           f"{cas_txt}; se mide solo en días con datos de casino.",
            "Ese grupo no es inactivo: juega casino. XS03 debe tratarlo como venta cruzada a deportes, no como activación.",
-           "Ajustar XS03 con casino completo: excluir o diferenciar a quien juega casino con frecuencia.", "", f'<span class="pill ok">Validado con {len(dias_post)} días</span>')}
+           "Ajustar XS03 con casino completo: excluir o diferenciar a quien juega casino con frecuencia.", "", f'<span class="pill ok">Validado con {dias_cas} días</span>')}
   <div class="g g2">
-    <section class="panel"><div class="ph"><h2>Proveedores de casino</h2><span class="sub">% del monto apostado · {dias_txt_corto}</span></div><div class="pb">{f_cas_prov}</div></section>
-    <section class="panel"><div class="ph"><h2>Rondas de casino por hora</h2><span class="sub">{dias_txt_corto} · hora del archivo</span></div><div class="pb">{f_cas_hora}
+    <section class="panel"><div class="ph"><h2>Proveedores de casino</h2><span class="sub">% del monto apostado · {cas_txt}</span></div><div class="pb">{f_cas_prov}</div></section>
+    <section class="panel"><div class="ph"><h2>Rondas de casino por hora</h2><span class="sub">{cas_txt} · hora del archivo</span></div><div class="pb">{f_cas_hora}
       <p class="small muted">El casino tiene actividad alta de madrugada y de noche, a diferencia de deportes (pico a mediodía). Es un dato a vigilar en las señales de juego responsable cuando llegue el mes completo.</p></div></section>
   </div>
   <section class="panel"><div class="ph"><h2>¿Quién jugó casino después del corte?</h2></div><div class="pb flush"><div class="list">
@@ -1672,10 +1714,10 @@ def construir_html(D):
     <div class="li"><span class="ic acc">{n(100 * cb.get('Registrados jul-sep', 0) / cas.jug, 0)}%</span><div><b>{n(cb.get('Registrados jul-sep', 0))} registrados jul-sep</b><span>Con datos de contacto.</span></div><span></span></div>
     <div class="li"><span class="ic ok">{n(100 * cb.get('Nuevos (no vistos jul-sep)', 0) / cas.jug, 0)}%</span><div><b>{n(cb.get('Nuevos (no vistos jul-sep)', 0))} no vistos en jul-sep</b><span>Jugadores de solo casino o que volvieron después de más de tres meses.</span></div><span></span></div>
   </div></div></section>
-  <section class="panel"><div class="ph"><h2>Qué hicieron los segmentos del 30-sep después del corte</h2><span class="sub">Actividad orgánica, antes de cualquier SMS</span></div><div class="pb flush">{t_pcv}</div>
+  <section class="panel"><div class="ph"><h2>Qué hicieron en oct-nov los segmentos de la foto base del {fin:%d-%m-%Y}</h2><span class="sub">Actividad orgánica, antes de cualquier SMS</span></div><div class="pb flush">{t_pcv}</div>
     <div class="pb small muted">{n(100 * pcv.set_index('ciclo_vida').loc['3_activo'].act / pcv.set_index('ciclo_vida').loc['3_activo'].jug, 0)} % de los activos tuvo actividad en esos días, frente a {n(100 * pcv.set_index('ciclo_vida').loc['5_inactivo_31_60'].act / pcv.set_index('ciclo_vida').loc['5_inactivo_31_60'].jug, 1)} % de los inactivos de 31-60 días y {n(100 * pcv.set_index('ciclo_vida').loc['1_nuevo_sin_actividad'].act / pcv.set_index('ciclo_vida').loc['1_nuevo_sin_actividad'].jug, 1)} % de los registrados sin actividad. Es la línea base natural, sin SMS; los grupos de control medirán el efecto incremental. Además, {n(D['post_nuevos'])} jugadores activos en esos días no aparecían en jul-sep.</div></section>
-  <section class="panel"><div class="ph"><h2>Cada día frente al mismo día de la semana en septiembre</h2><span class="sub">Promedio de los 4 o 5 días equivalentes de septiembre</span></div><div class="pb flush">{t_pd}</div>
-    <div class="pb small muted">Hasta el 8-nov, deportes y recargas estuvieron casi siempre por encima del mismo día de septiembre; desde el 14-nov quedaron en el mismo nivel o por debajo. Puede ser calendario deportivo o un cambio de tendencia: con días sueltos no se distingue. Los lunes 2-nov y 16-nov fueron festivos, así que su comparación con lunes normales de septiembre no es equivalente. Los productos con archivo recortado o faltante no se comparan.</div></section>
+  <section class="panel"><div class="ph"><h2>Cada semana frente a septiembre</h2><span class="sub">Cada día se compara con el promedio del mismo día de la semana en septiembre</span></div><div class="pb flush">{t_pd}</div>
+    <div class="pb small muted">Solo se suman los días con archivo completo de cada producto. Las semanas con festivo (12-oct, 2-nov y 16-nov) no son del todo comparables con septiembre. Casino no tiene línea base porque no hay datos de septiembre.</div></section>
 </section>
 
 {vistas_activacion}
@@ -1694,8 +1736,8 @@ def construir_html(D):
     <tr><td>Medios de pago en los SMS</td><td><span class="pill warn">A validar</span></td><td>YAJUEGO PAGOS, PSE y Bre-B (87 % de las recargas)</td><td>Confirmar vigencia</td></tr>
     <tr><td>Enlaces de destino</td><td><span class="pill crit">Pendiente</span></td><td>URL de ejemplo; los sitios de YAjuego no fueron accesibles desde nuestro entorno</td><td>CRM define URL y acortador</td></tr>
     <tr><td>Tarifa SMS</td><td><span class="pill crit">Pendiente</span></td><td>Todos los copies caben en 1 segmento GSM-7</td><td>Tarifa del proveedor</td></tr>
-    <tr><td>Casino</td><td><span class="pill warn">Parcial</span></td><td>Solo {dias_txt_corto}; se usa como seguimiento, no para segmentar</td><td>Export de casino del mes completo</td></tr>
-    <tr><td>Octubre</td><td><span class="pill crit">Pendiente</span></td><td>Llegaron días sueltos ({dias_txt_corto}); {n_rec} archivos recortados</td><td>Export completo de octubre con el formato de jul-sep</td></tr>
+    <tr><td>Casino</td><td><span class="pill warn">Parcial</span></td><td>Desde el {fd(cas_d0)}; entra a segmentos y audiencias al corte actual</td><td>Export de casino del mes completo</td></tr>
+    <tr><td>Octubre</td><td><span class="pill warn">Parcial</span></td><td>1 al 25-oct completo sin casino; {('sin datos el ' + sin_txt + '; ') if sin_txt else ''}{n_rec} combinaciones parciales</td><td>Export de casino del 1 al 27-oct y de los días faltantes</td></tr>
     <tr><td>Bonos y promociones</td><td><span class="pill ok">Decisión</span></td><td>Ninguna campaña ofrece incentivos</td><td>Si se suman, confirmarlos y medirlos como variante</td></tr>
   </tbody></table></div></div></section>
   <section class="panel"><div class="ph"><h2>Riesgos y contraargumentos</h2></div><div class="pb flush"><div class="list">
