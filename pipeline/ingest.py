@@ -154,7 +154,9 @@ def cargar_hoja(con, load_id, path, h, hoja, header, datos, ahora):
 def ingest(raw_dir: Path = RAW_DIR, db_path: Path = DB_PATH, verbose=True):
     con = duckdb.connect(str(db_path))
     init_meta(con)
-    archivos = sorted(p for p in raw_dir.rglob("*") if p.suffix.lower() in (".xlsx", ".xlsm"))
+    # Se ignoran los metadatos de macOS (__MACOSX/, ._archivo) y los bloqueos de Excel (~$archivo).
+    archivos = sorted(p for p in raw_dir.rglob("*") if p.suffix.lower() in (".xlsx", ".xlsm")
+                      and not p.name.startswith(("._", "~$")) and "__MACOSX" not in p.parts)
     for path in archivos:
         h = sha256(path)
         if con.execute("SELECT 1 FROM meta.manifiesto WHERE archivo=? AND sha256=?", [path.name, h]).fetchone():
