@@ -115,12 +115,19 @@ qué hizo cada grupo equivalente en los días siguientes, sin ningún mensaje.
 
 ## Modelos predictivos
 
-`pipeline/prediccion.py` entrena dos regresiones logísticas en cada carga:
+`pipeline/prediccion.py` entrena cinco regresiones logísticas en cada carga:
 
 | Modelo | Población al corte | Evento | Ventana |
 |---|---|---|---|
 | Abandono | Recarga o apuesta en los últimos 30 días | Ninguna recarga ni apuesta | 30 días |
 | Activación | Registrados en los últimos 30 días sin recarga | Primera recarga | 14 días |
+| Hábito | Apuestan en deportes 1 a 4 días al mes | 5 o más días con apuesta | 30 días |
+| Venta cruzada a deportes | Recargan en los últimos 30 días y nunca apostaron en deportes | Primera apuesta deportiva | 30 días |
+| Otra modalidad | 3+ apuestas en 60 días, solo prepartido o solo en vivo | Apuesta en la otra modalidad | 30 días |
+
+Los tres modelos de crecimiento excluyen al puntuar a quien tiene señales de juego responsable y al
+1 % de mayor intensidad. Venta cruzada a casino se entrenará cuando haya 6 a 8 semanas de casino;
+mientras tanto `reports/afinidad_casino.json` describe qué perfiles de apostadores ya juegan casino.
 
 - Se arman cortes simulados semanales: variables con datos hasta T, resultado en (T, T + ventana].
 - Validación temporal: se entrena con los cortes cuyo resultado cierra antes del último corte y se evalúa

@@ -333,13 +333,19 @@ def cargar_app(D):
     D["cubo"] = con.execute("""
         SELECT s.ciclo_vida AS cv, s.nivel_valor AS nv, s.pref_modalidad AS pm,
                s.estado_contacto AS ec, s.senal_revision_juego_responsable::INT AS jr,
-               j.en_registros::INT AS reg, coalesce(p.modelo || '_' || p.banda, 'sin_prediccion') AS pr, count(*) AS n
+               j.en_registros::INT AS reg, coalesce(p.modelo || '_' || p.banda, 'sin_prediccion') AS pr,
+               coalesce(o.op_modelo, 'sin_oportunidad') AS op, count(*) AS n
         FROM mart.segmento_jugador s JOIN mart.jugador_resumen j USING (player_id)
-        LEFT JOIN (SELECT * FROM mart.prediccion_jugador   -- quien cae en ambos modelos queda con activación
+        LEFT JOIN (SELECT * FROM mart.prediccion_jugador WHERE modelo IN ('abandono', 'activacion')  -- en ambos: queda activación
                    QUALIFY row_number() OVER (PARTITION BY player_id ORDER BY (modelo = 'activacion') DESC) = 1) p USING (player_id)
+        LEFT JOIN (SELECT player_id, modelo AS op_modelo FROM mart.prediccion_jugador   -- mejor oportunidad con probabilidad alta
+                   WHERE banda = 'alta' AND modelo IN ('cruzada_deportes', 'habito', 'modalidad')
+                   QUALIFY row_number() OVER (PARTITION BY player_id ORDER BY CASE modelo WHEN 'cruzada_deportes' THEN 1 WHEN 'habito' THEN 2 ELSE 3 END) = 1) o
+          USING (player_id)
         GROUP BY ALL""").df()
     # Predicción: métricas de validación y pronóstico por segmento al corte.
     D["pred"] = json.loads((REPORT_DIR / "prediccion.json").read_text(encoding="utf-8"))
+    D["afinidad"] = json.loads((REPORT_DIR / "afinidad_casino.json").read_text(encoding="utf-8"))
     D["pred_seg"] = con.execute("""
         SELECT p.modelo, s.ciclo_vida, j.en_registros reg, p.banda, count(*) n, sum(p.probabilidad) esperado,
                sum(p.probabilidad * (1 - p.probabilidad)) var,
@@ -996,7 +1002,7 @@ JS = r"""
   const cubo = DATA.cubo;
   const fmt = n => n.toLocaleString('es-CO');
   const total = cubo.reduce((s, r) => s + r.n, 0);
-  const dims = ['cv', 'nv', 'pm', 'pr'];
+  const dims = ['cv', 'nv', 'pm', 'pr', 'op'];
   function sel(dim){ return [...document.querySelectorAll(`[data-dim="${dim}"]:checked`)].map(i => i.value); }
   function calc(){
     const S = Object.fromEntries(dims.map(d => [d, new Set(sel(d))]));
@@ -1083,6 +1089,8 @@ NOMBRES_PR = {"abandono_alta": "Riesgo de abandono alto", "abandono_media": "Rie
               "abandono_baja": "Riesgo de abandono bajo", "activacion_alta": "Prob. de activarse alta",
               "activacion_media": "Prob. de activarse media", "activacion_baja": "Prob. de activarse baja",
               "sin_prediccion": "Sin predicción"}
+NOMBRES_OP = {"habito": "Oportunidad: volverse habitual", "cruzada_deportes": "Oportunidad: deportes",
+              "modalidad": "Oportunidad: otra modalidad", "sin_oportunidad": "Sin oportunidad destacada"}
 NOMBRES_PM = {"insuficiente": "Menos de 5 apuestas", "prepartido": "Prepartido", "en_vivo": "En vivo", "mixto": "Mixto"}
 
 
@@ -1382,6 +1390,7 @@ def construir_html(D):
     ck_nv = checks("nv", NOMBRES_NV, ["sin_recarga", "bajo", "medio", "alto"])
     ck_pm = checks("pm", NOMBRES_PM, ["insuficiente", "prepartido", "en_vivo", "mixto"])
     ck_pr = checks("pr", NOMBRES_PR, list(NOMBRES_PR))
+    ck_op = checks("op", NOMBRES_OP, list(NOMBRES_OP))
 
     # ---------- campañas ----------
     BASE = {
@@ -1571,6 +1580,25 @@ def construir_html(D):
                                 "Validar el celular en el formulario de registro."),
         },
     }
+    FACTORES_TXT.update({
+        "habito": {
+            "dias_sin_apostar": ("Días desde su última apuesta", "{lo_d}: {plo} · {hi_d}: {phi}", "Contactar en la misma semana de su última apuesta."),
+            "dias_apuesta_30": ("Días con apuesta en el último mes", "{lo_d} de 30: {plo} · {hi_d}: {phi}", "Empezar por quien ya apuesta 2 a 4 días al mes."),
+            "registrado_desde_julio": ("Nuevo o histórico", "Base histórica: {plo} · registrado desde julio: {phi}", ""),
+            "tendencia_apuesta": ("Cambio frente al mes anterior", "{lo_s} días con apuesta: {plo} · {hi_s} días: {phi}", ""),
+        },
+        "cruzada_deportes": {
+            "log_recargas_30": ("Recargas en el último mes", "{lo_n}: {plo} · {hi_n}: {phi}", "Empezar por los ocasionales: quien recarga mucho ya tiene su juego en casino."),
+            "verificado": ("Celular verificado", "Sin verificar: {plo} · verificado: {phi}", ""),
+            "registrado_desde_julio": ("Nuevo o histórico", "Base histórica: {plo} · registrado desde julio: {phi}", ""),
+        },
+        "modalidad": {
+            "solo_prepartido": ("Modalidad actual", "Solo en vivo → prueba prepartido: {plo} · solo prepartido → prueba en vivo: {phi}",
+                                "Es más fácil llevar a prepartido al que apuesta en vivo que al revés."),
+            "dias_sin_apostar": ("Días desde su última apuesta", "{lo_d}: {plo} · {hi_d}: {phi}", "Proponer la otra modalidad mientras está activo."),
+            "registrado_desde_julio": ("Nuevo o histórico", "Base histórica: {plo} · registrado desde julio: {phi}", ""),
+        },
+    })
     PRED_TXT = {
         "abandono": dict(titulo="Abandono en 30 días", pob="jugadores activos en los últimos 30 días",
                          evento="dejarían de jugar", corto="abandonos", banda="Riesgo alto", prob="Probabilidad de irse",
@@ -1587,19 +1615,50 @@ def construir_html(D):
                                   "Probabilidad baja y más de 21 días: enviar solo como prueba con control.",
                                   "Automatizar la carga diaria para enviar ACT01 a las 24-72 h."],
                            accion={"1_nuevo_sin_actividad": "ACT01 (0-7 días) · ACT05 (8-30 días)"}),
+        "habito": dict(titulo="Volverse habitual en 30 días", pob="apostadores ocasionales (1 a 4 días al mes)",
+                       evento="apostarían 5 días o más", corto="nuevos habituales", banda="Probabilidad alta", prob="Probabilidad de volverse habitual",
+                       auc_tip="Entre un ocasional que se volvió habitual y uno que no, el modelo le da más probabilidad al primero {} de cada 100 veces.",
+                       pasos=['En el <a href="#audiencias">Constructor</a>, filtra «Oportunidad: volverse habitual».',
+                              "Mensaje: la agenda de partidos de su modalidad preferida, sin bonos.",
+                              "Un SMS por semana como máximo."],
+                       accion={"3_activo": "Agenda deportiva semanal", "4_enfriandose": "RET04 con agenda"}),
+        "cruzada_deportes": dict(titulo="Primera apuesta deportiva en 30 días", pob="jugadores que recargan y no apuestan en deportes",
+                                 evento="harían su primera apuesta deportiva", corto="primeras apuestas deportivas", banda="Probabilidad alta",
+                                 prob="Probabilidad de apostar en deportes",
+                                 auc_tip="Entre un jugador que probó deportes y uno que no, el modelo le da más probabilidad al primero {} de cada 100 veces.",
+                                 pasos=['XS03: en el <a href="#audiencias">Constructor</a>, empieza por «Oportunidad: deportes».',
+                                        "Mensaje: cómo funciona una apuesta simple y la agenda del fin de semana.",
+                                        "No interrumpir a quien juega casino a diario."],
+                                 accion={"3_activo": "XS03", "2_nuevo_en_activacion": "XS03", "4_enfriandose": "XS03 con agenda"}),
+        "modalidad": dict(titulo="Probar la otra modalidad en 30 días", pob="apostadores que solo usan prepartido o solo en vivo",
+                          evento="probarían la otra modalidad", corto="cambios de modalidad", banda="Probabilidad alta",
+                          prob="Probabilidad de probar la otra modalidad",
+                          auc_tip="Entre un apostador que probó la otra modalidad y uno que no, el modelo le da más probabilidad al primero {} de cada 100 veces.",
+                          pasos=['En el <a href="#audiencias">Constructor</a>, filtra «Oportunidad: otra modalidad».',
+                                 "Solo prepartido: partidos en vivo del día. Solo en vivo: la agenda con anticipación.",
+                                 "Es la misma variante de mensaje que ya usan RET04 y REC06."],
+                          accion={"3_activo": "Variante por modalidad", "4_enfriandose": "RET04 con variante"}),
     }
 
     def frase(f, k):
         t = FACTORES_TXT[k].get(f["variable"])
         vals = dict(lo_d=dias(f["desde"]), hi_d=dias(f["hasta"]), plo=pct(f["p_desde"], 0 if f["p_desde"] >= 0.1 else 1),
-                    phi=pct(f["p_hasta"], 0 if f["p_hasta"] >= 0.1 else 1))
+                    phi=pct(f["p_hasta"], 0 if f["p_hasta"] >= 0.1 else 1), lo_n=n(f["desde"]), hi_n=n(f["hasta"]),
+                    lo_p=pct(f["desde"], 0), hi_p=pct(f["hasta"], 0), lo_m=cop(round(f["desde"], -3)), hi_m=cop(round(f["hasta"], -3)),
+                    lo_s=f"{'+' if f['desde'] > 0 else ''}{n(f['desde'])}", hi_s=f"{'+' if f['hasta'] > 0 else ''}{n(f['hasta'])}")
         if t:
             return t[0], t[1].format(**vals), t[2]
-        return f["nombre"].capitalize(), f"Pasar de {f['desde']:.0f} a {f['hasta']:.0f} {f['unidad']} cambia la probabilidad de {vals['plo']} a {vals['phi']}.", ""
+        u = f["unidad"]
+        lo, hi = {"días": ("lo_d", "hi_d"), "%": ("lo_p", "hi_p"), "$": ("lo_m", "hi_m")}.get(u, ("lo_n", "hi_n"))
+        if u == "sí/no":
+            return f["nombre"].capitalize(), f"No: {vals['plo']} · sí: {vals['phi']}", ""
+        sufijo = "" if u in ("días", "%", "$") else f" {u}"
+        return f["nombre"].capitalize(), f"{vals[lo]}{sufijo}: {vals['plo']} · {vals[hi]}{sufijo}: {vals['phi']}", ""
 
-    pred_html = ""
+    bloques = {}
     for m in D["pred"]:
         k = m["modelo"]
+        pred_html = ""
         tx = PRED_TXT[k]
         ps = D["pred_seg"][D["pred_seg"].modelo == k]
         tot, esp = int(ps.n.sum()), float(ps.esperado.sum())
@@ -1611,7 +1670,7 @@ def construir_html(D):
         seg = seg[seg.n >= 50]
         filas = [dict(s=f"<strong>{NOMBRES_CV.get(r.ciclo_vida, r.ciclo_vida)}</strong>", n=n(r.n), e=n(r.esp), p=pct(r.esp / r.n, 1),
                       a=n(r.na), c=n(r.ca), q=tx["accion"].get(r.ciclo_vida, "—")) for r in seg.itertuples()]
-        t_seg_p = table(pd.DataFrame(filas), [("s", "Segmento"), ("n", "Jugadores"), ("e", "Se irían" if k == "abandono" else "Recargarían"),
+        t_seg_p = table(pd.DataFrame(filas), [("s", "Segmento"), ("n", "Jugadores"), ("e", "Se irían" if k == "abandono" else "Lo harían"),
                                               ("p", "Prob. promedio"), ("a", "En banda alta"), ("c", "Contactables"), ("q", "Qué hacer")],
                         num=("n", "e", "p", "a", "c"))
         cal = pd.DataFrame(m["calibracion"])
@@ -1619,7 +1678,7 @@ def construir_html(D):
                                                          ("Lo que realmente pasó", list(100 * cal.real), "--s2")],
                        fmt=lambda v: f"{n(v, 1)} %" if v < 10 else f"{n(v, 0)} %", h=240, labels=False,
                        sub=["menor prob." if i == 0 else ("mayor prob." if i == len(cal) - 1 else "") for i in cal.index])
-        sel = [f for f in m["factores"] if abs(f["diferencia"]) >= (0.02 if k == "abandono" else 0.005)][:5]
+        sel = [f for f in m["factores"] if abs(f["diferencia"]) >= (0.02 if k == "abandono" else 0.005) and abs(f["diferencia"]) >= 0.15 * max(abs(x["diferencia"]) for x in m["factores"])][:5]
         otros = [f["nombre"] for f in m["factores"] if f not in sel]
         fac = ""
         for f in sel:
@@ -1637,7 +1696,7 @@ def construir_html(D):
       {tile('Pronóstico', n(esp), f"{tx['evento']} · {n(100 * esp / tot, 0)} % de {n(tot)}", acc=True, tip=f"Suma de las probabilidades de los {n(tot)} {tx['pob']}.")}
       {tile(tx['banda'], n(n_alta), f"{n(c_alta)} contactables · prob. media {pct(p_alta, 0 if p_alta >= 0.1 else 1)}", tip="El 20 % con mayor probabilidad.")}
       {tile('Cobertura del 20 % alto', f"{n(100 * m['captura_top20'], 0)}<small> %</small>", f"de los {tx['corto']} reales (al azar: 20 %)", tip="Medido en jugadores que el modelo no usó para aprender.")}
-      {tile('Confiabilidad', n(m['auc'], 2), "Buena · 0,5 es azar, 1 es perfecto", tip=tx['auc_tip'].format(n(100 * m['auc'], 0)))}
+      {tile('Confiabilidad', n(m['auc'], 2), ("Buena" if m['auc'] >= 0.75 else "Media: útil para priorizar" if m['auc'] >= 0.65 else "Baja") + " · 0,5 es azar", tip=tx['auc_tip'].format(n(100 * m['auc'], 0)))}
     </div>
     <div class="g g2">
       <div><h3 style="margin-bottom:8px">{tx['prob']} según…{info("Jugadores que solo se diferencian en ese factor. Es asociación, no causa: sirve para elegir a quién contactar y cuándo.")}</h3>
@@ -1650,15 +1709,47 @@ def construir_html(D):
     {t_seg_p}
     <div class="note"><b>Qué hacer</b><ul style="margin:2px 0 0;padding-left:18px;display:grid;gap:2px">{pasos}</ul></div>
   </div></section>"""
-    pred_html = f"""<section class="view" id="v-prediccion" data-title="Predicción">
-  <div class="vhead"><div><h1>Predicción</h1><p>A quién contactar primero: probabilidad de abandono y de primera recarga por jugador.</p></div></div>
-  {pred_html}
+        bloques[k] = pred_html
+    _op = D["pred_seg"][D["pred_seg"].modelo.isin(["habito", "cruzada_deportes", "modalidad"]) & (D["pred_seg"].banda == "alta")]
+    op_alta, op_cont = int(_op.n.sum()), int(_op.contactables.sum())
+    # Afinidad con casino (descriptivo mientras no haya historia para un modelo)
+    af = D["afinidad"]
+    afd = pd.DataFrame(af["grupos"])
+    filas_af = []
+    for dim, g in afd.groupby("dimension", sort=False):
+        top_ = g.sort_values("pct_casino", ascending=False)
+        filas_af.append(dict(d=f"<strong>{dim}</strong>", alto=f"{top_.iloc[0].grupo} · {pct(top_.iloc[0].pct_casino)}",
+                             bajo=f"{top_.iloc[-1].grupo} · {pct(top_.iloc[-1].pct_casino)}"))
+    t_af = table(pd.DataFrame(filas_af), [("d", "Según"), ("alto", "Más juega casino"), ("bajo", "Menos juega casino")])
+    casino_html = f"""
+  <section class="panel"><div class="ph"><h2>Venta cruzada a casino</h2><span class="pill neu">Modelo en preparación</span></div><div class="pb">
+    <div class="g g3">
+      {tile('Apostadores de deportes', n(af['apostadores']), f"desde el {fd(cas_d0)}")}
+      {tile('Ya juegan casino', f"{n(100 * af['pct_casino'], 0)}<small> %</small>", "de esos apostadores", acc=True)}
+      {tile('Modelo disponible', "mediados de dic.", "con 6 a 8 semanas de casino", tip="Para predecir con rigor hace falta ver varias semanas de casino antes y después de cada corte.")}
+    </div>
+    <h3>Quién se parece a los que ya juegan casino</h3>
+    {t_af}
+    <div class="note"><b>Qué hacer</b><span>Mientras llega el modelo, probar casino con un piloto pequeño en los perfiles con más afinidad, con grupo de control.</span></div>
+  </div></section>"""
+    pred_html = f"""<section class="view" id="v-prediccion" data-title="Riesgo">
+  <div class="vhead"><div><h1>Riesgo</h1><p>Quién se va a ir y quién está por hacer su primera recarga.</p></div></div>
+  {bloques['abandono']}{bloques['activacion']}
   <details class="how"><summary>¿Cómo funcionan los modelos?</summary>Regresión logística reentrenada con cada carga. Aprende de lo que hicieron jugadores parecidos en semanas anteriores y se prueba en la semana más reciente, que no vio. Solo usa datos conocidos en cada fecha; casino entra cuando tenga más historia (existe desde el {fd(cas_d0)}). Predice quién; el efecto del SMS lo mide el grupo de control.</details>
+</section>
+
+<section class="view" id="v-crecimiento" data-title="Crecimiento">
+  <div class="vhead"><div><h1>Crecimiento</h1><p>Quién está listo para jugar más seguido o probar otro producto.</p></div></div>
+  <div class="g g2">
+    <div class="note"><b>Dónde está el crecimiento</b><span>De {n(op_alta)} jugadores con probabilidad alta en los tres modelos, solo {n(op_cont)} tienen teléfono. El resto es base anterior a julio: <a href="#ajustes">pedir sus datos</a> multiplica este módulo.</span></div>
+    <div class="note"><b>Crecimiento responsable</b><span>Más frecuencia, no montos más altos. Fuera quien tiene señales de juego responsable y el 1 % de mayor intensidad; sin bonos y máximo un SMS por semana.</span></div>
+  </div>
+  {bloques['habito']}{bloques['cruzada_deportes']}{bloques['modalidad']}{casino_html}
 </section>
 """
     nav = [("Operación", [("inicio", "home", "Inicio", ""), ("datos", "db", "Fuentes de datos", str(int((D['manifiesto'].estado == 'cargado').sum()))),
                           ("modelo", "model", "Modelo", ""), ("diccionario", "book", "Diccionario", str(len(D['dicc'])))]),
-           ("Clientes", [("jugadores", "users", "Jugadores", n(D['universo_base'])), ("insights", "spark", "Insights", "7"), ("segmentos", "users", "Segmentos", "7"), ("prediccion", "gauge", "Predicción", "2"), ("audiencias", "filter", "Constructor", "")]),
+           ("Clientes", [("jugadores", "users", "Jugadores", n(D['universo_base'])), ("insights", "spark", "Insights", "7"), ("segmentos", "users", "Segmentos", "7"), ("prediccion", "gauge", "Riesgo", "2"), ("crecimiento", "spark", "Crecimiento", "3"), ("audiencias", "filter", "Constructor", "")]),
            ("Seguimiento", [("octubre", "spark", "Tendencias y casino", "")]),
            ("Activación", [("campanas", "send", "Campañas SMS", "6"), ("medicion", "gauge", "Medición", ""), ("plan", "map", "Plan", "")]),
            ("Cuenta", [("ajustes", "cog", "Pendientes", str(n_pend))])]
@@ -1877,7 +1968,10 @@ def construir_html(D):
         <div class="fgroup"><h4>Nivel de valor</h4><div class="checks">{ck_nv}</div></div>
         <div class="fgroup"><h4>Preferencia deportiva</h4><div class="checks">{ck_pm}</div></div>
       </div>
-      <div class="fgroup"><h4>Predicción</h4><div class="checks" style="grid-template-columns:repeat(auto-fill,minmax(230px,1fr))">{ck_pr}</div></div>
+      <div class="g g2" style="gap:20px">
+        <div class="fgroup"><h4>Riesgo</h4><div class="checks">{ck_pr}</div></div>
+        <div class="fgroup"><h4>Crecimiento</h4><div class="checks">{ck_op}</div></div>
+      </div>
       <div class="fgroup"><h4>Exclusiones</h4><div class="checks">
         <label><input type="checkbox" id="f-cont" checked> Solo contactables con los datos disponibles</label>
         <label><input type="checkbox" id="f-jr" checked> Excluir señales de juego responsable</label></div></div>

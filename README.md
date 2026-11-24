@@ -60,4 +60,4 @@ diario que empieza después de la 01:00 o termina antes de las 23:00 se marca co
 | Controles de conciliación entre capas y audiencias | Medición del efecto incremental por ola |
 | Verificador de codificación y longitud de SMS (GSM-7) | |
 | Aplicación Vincero (HTML autocontenido, solo agregados) | |
-| Regresión logística de abandono (30 días) y activación (14 días), con validación temporal | Medir el efecto del SMS por banda de probabilidad (uplift) |
+| Regresión logística de abandono, activación, hábito, venta cruzada a deportes y otra modalidad, con validación temporal | Modelo de venta cruzada a casino (con más historia) y efecto del SMS por banda de probabilidad |

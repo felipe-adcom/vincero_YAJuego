@@ -38,9 +38,9 @@ from config import REPORT_DIR  # noqa: E402
 # Base de actividad: recargas y apuestas deportivas válidas (sin pruebas).
 BASE_SQL = """
 CREATE OR REPLACE TEMP TABLE p_act AS
-  SELECT player_id, fecha_hora f, 'r' src, monto m, NULL::INT live, NULL::VARCHAR tipo, metodo FROM core.recarga WHERE coalesce(es_prueba, 0) = 0
+  SELECT player_id, fecha_hora f, 'r' src, monto m, NULL::INT live, NULL::VARCHAR tipo, metodo, NULL::INT sel FROM core.recarga WHERE coalesce(es_prueba, 0) = 0
   UNION ALL
-  SELECT player_id, fecha_hora, 'a', monto_apostado, live_cod, tipo_apuesta, NULL FROM core.apuesta WHERE coalesce(es_prueba, 0) = 0;
+  SELECT player_id, fecha_hora, 'a', monto_apostado, live_cod, tipo_apuesta, NULL, selecciones FROM core.apuesta WHERE coalesce(es_prueba, 0) = 0;
 CREATE OR REPLACE TEMP TABLE p_reg AS
   SELECT player_id, fecha_registro, fecha_nacimiento, genero, verificacion_celular_cod, fecha_verificacion_celular,
          fuente_registro_cod, network_id, promocode_registro, telefono_estado
@@ -97,6 +97,85 @@ SELECT pob.player_id, (y.player_id IS NOT NULL)::INT y,
 FROM pob CROSS JOIN t LEFT JOIN y USING (player_id) LEFT JOIN apu USING (player_id)
 """
 
+# Variables comunes de perfil al corte T (sin campos que sean foto de la exportación).
+PERFIL = """
+       date_diff('day', least(coalesce(r.fecha_registro, prim.primera), prim.primera), t.t) antiguedad_dias,
+       (r.player_id IS NOT NULL)::INT registrado_desde_julio,
+       (r.verificacion_celular_cod = 30 AND coalesce(r.fecha_verificacion_celular, r.fecha_registro) <= t.t)::INT verificado,
+       date_diff('year', r.fecha_nacimiento, t.t) edad"""
+
+HABITO_SQL = """
+WITH t AS (SELECT getvariable('t_pred') t),
+     a AS (SELECT p.* FROM p_act p, t WHERE p.f <= t.t),
+     prim AS (SELECT player_id, min(f) primera FROM a GROUP BY 1),
+     g AS (
+       SELECT a.player_id,
+              count(DISTINCT a.f::DATE) FILTER (WHERE a.src = 'a' AND a.f > t.t - INTERVAL 30 DAY) dias_apuesta_30,
+              count(DISTINCT a.f::DATE) FILTER (WHERE a.src = 'a' AND a.f > t.t - INTERVAL 60 DAY AND a.f <= t.t - INTERVAL 30 DAY) dias_apuesta_30_60,
+              date_diff('day', max(a.f) FILTER (WHERE a.src = 'a'), any_value(t.t)) dias_sin_apostar,
+              count(*) FILTER (WHERE a.src = 'a' AND a.f > t.t - INTERVAL 30 DAY) apuestas_30,
+              coalesce(sum(a.m) FILTER (WHERE a.src = 'a' AND a.f > t.t - INTERVAL 30 DAY), 0) apostado_30,
+              median(a.m) FILTER (WHERE a.src = 'a' AND a.f > t.t - INTERVAL 60 DAY) apuesta_mediana,
+              avg((a.live IN (1, 2))::INT) FILTER (WHERE a.src = 'a' AND a.f > t.t - INTERVAL 60 DAY) pct_en_vivo,
+              avg((a.tipo = 'SINGLE')::INT) FILTER (WHERE a.src = 'a' AND a.f > t.t - INTERVAL 60 DAY) pct_simples,
+              avg((isodow(a.f) >= 6)::INT) FILTER (WHERE a.src = 'a' AND a.f > t.t - INTERVAL 60 DAY) pct_fin_de_semana,
+              count(*) FILTER (WHERE a.src = 'r' AND a.f > t.t - INTERVAL 30 DAY) recargas_30,
+              mode(a.metodo) FILTER (WHERE a.src = 'r' AND a.f > t.t - INTERVAL 60 DAY) metodo
+       FROM a, t GROUP BY 1),
+     y AS (SELECT player_id, count(DISTINCT f::DATE) d FROM p_act, t WHERE src = 'a' AND f > t.t AND f <= t.t + INTERVAL 30 DAY GROUP BY 1)
+SELECT g.*, (coalesce(y.d, 0) >= 5)::INT y, """ + PERFIL + """
+FROM g CROSS JOIN t LEFT JOIN y USING (player_id) LEFT JOIN prim USING (player_id) LEFT JOIN p_reg r USING (player_id)
+WHERE g.dias_apuesta_30 BETWEEN 1 AND 4
+"""
+
+CRUZADA_SQL = """
+WITH t AS (SELECT getvariable('t_pred') t),
+     a AS (SELECT p.* FROM p_act p, t WHERE p.f <= t.t),
+     prim AS (SELECT player_id, min(f) primera FROM a GROUP BY 1),
+     g AS (
+       SELECT a.player_id,
+              count(DISTINCT a.f::DATE) FILTER (WHERE a.f > t.t - INTERVAL 30 DAY) dias_recarga_30,
+              count(*) FILTER (WHERE a.f > t.t - INTERVAL 30 DAY) recargas_30,
+              coalesce(sum(a.m) FILTER (WHERE a.f > t.t - INTERVAL 30 DAY), 0) recargado_30,
+              median(a.m) recarga_mediana,
+              date_diff('day', max(a.f), any_value(t.t)) dias_sin_recargar,
+              avg((hour(a.f) >= 20 OR hour(a.f) < 6)::INT) pct_noche,
+              avg((isodow(a.f) >= 6)::INT) pct_fin_de_semana,
+              mode(a.metodo) metodo
+       FROM a, t WHERE a.src = 'r' GROUP BY 1
+       HAVING max(a.f) > any_value(t.t) - INTERVAL 30 DAY),
+     sin_dep AS (SELECT g.player_id FROM g WHERE NOT EXISTS (SELECT 1 FROM p_act p, t WHERE p.player_id = g.player_id AND p.src = 'a' AND p.f <= t.t)),
+     y AS (SELECT DISTINCT player_id FROM p_act, t WHERE src = 'a' AND f > t.t AND f <= t.t + INTERVAL 30 DAY)
+SELECT g.*, (y.player_id IS NOT NULL)::INT y, """ + PERFIL + """
+FROM g JOIN sin_dep USING (player_id) CROSS JOIN t LEFT JOIN y USING (player_id) LEFT JOIN prim USING (player_id) LEFT JOIN p_reg r USING (player_id)
+"""
+
+MODALIDAD_SQL = """
+WITH t AS (SELECT getvariable('t_pred') t),
+     a AS (SELECT p.* FROM p_act p, t WHERE p.f <= t.t),
+     prim AS (SELECT player_id, min(f) primera FROM a GROUP BY 1),
+     g AS (
+       SELECT a.player_id,
+              (max((a.live IN (1, 2))::INT) = 0)::INT solo_prepartido,
+              count(*) apuestas_60,
+              count(DISTINCT a.f::DATE) FILTER (WHERE a.f > t.t - INTERVAL 30 DAY) dias_apuesta_30,
+              date_diff('day', max(a.f), any_value(t.t)) dias_sin_apostar,
+              median(a.m) apuesta_mediana,
+              avg((a.tipo = 'SINGLE')::INT) pct_simples,
+              median(a.sel) selecciones_mediana,
+              avg((isodow(a.f) >= 6)::INT) pct_fin_de_semana
+       FROM a, t WHERE a.src = 'a' AND a.f > t.t - INTERVAL 60 DAY GROUP BY 1
+       HAVING count(*) >= 3 AND (max((a.live IN (1, 2))::INT) = 0 OR min((a.live IN (1, 2))::INT) = 1)),
+     y AS (SELECT DISTINCT g.player_id FROM g JOIN p_act p USING (player_id), t
+           WHERE p.src = 'a' AND p.f > t.t AND p.f <= t.t + INTERVAL 30 DAY
+             AND ((g.solo_prepartido = 1 AND p.live IN (1, 2)) OR (g.solo_prepartido = 0 AND p.live = 0)))
+SELECT g.*, (y.player_id IS NOT NULL)::INT y, """ + PERFIL + """
+FROM g CROSS JOIN t LEFT JOIN y USING (player_id) LEFT JOIN prim USING (player_id) LEFT JOIN p_reg r USING (player_id)
+"""
+
+PERFIL_ETQ = {"antiguedad_dias": ("antigüedad como jugador", "días"), "registrado_desde_julio": ("registrado desde julio", "sí/no"),
+              "verificado": ("celular verificado", "sí/no"), "edad": ("edad", "años")}
+
 MODELOS = {
     "abandono": dict(
         sql=ABANDONO_SQL, ventana=30, paso=7, historia=60,
@@ -132,6 +211,49 @@ MODELOS = {
             "registro_fin_de_semana": ("se registró en fin de semana", "sí/no"),
             "hora_registro": ("hora del registro", "h"),
         }),
+    "habito": dict(
+        sql=HABITO_SQL, ventana=30, paso=7, historia=60, crecimiento=True,
+        num=["dias_apuesta_30", "tendencia_apuesta", "dias_sin_apostar", "log_apuestas_30", "log_apostado_30", "log_apuesta_mediana",
+             "pct_en_vivo", "pct_simples", "pct_fin_de_semana", "recargas_30", "antiguedad_dias", "registrado_desde_julio", "verificado", "edad"],
+        cat=["metodo"],
+        etiquetas={**PERFIL_ETQ,
+                   "dias_apuesta_30": ("días con apuesta en los últimos 30", "días"),
+                   "tendencia_apuesta": ("cambio de días con apuesta frente al mes anterior", "días"),
+                   "dias_sin_apostar": ("días desde su última apuesta", "días"),
+                   "log_apuestas_30": ("apuestas en los últimos 30 días", "apuestas"),
+                   "log_apostado_30": ("monto apostado en los últimos 30 días", "$"),
+                   "log_apuesta_mediana": ("apuesta típica", "$"),
+                   "pct_en_vivo": ("proporción de apuestas en vivo", "%"),
+                   "pct_simples": ("proporción de apuestas simples", "%"),
+                   "pct_fin_de_semana": ("proporción de apuestas en fin de semana", "%"),
+                   "recargas_30": ("recargas en los últimos 30 días", "recargas")}),
+    "cruzada_deportes": dict(
+        sql=CRUZADA_SQL, ventana=30, paso=7, historia=60, crecimiento=True,
+        num=["dias_recarga_30", "log_recargas_30", "log_recargado_30", "log_recarga_mediana", "dias_sin_recargar",
+             "pct_noche", "pct_fin_de_semana", "antiguedad_dias", "registrado_desde_julio", "verificado", "edad"],
+        cat=["metodo"],
+        etiquetas={**PERFIL_ETQ,
+                   "dias_recarga_30": ("días con recarga en los últimos 30", "días"),
+                   "log_recargas_30": ("recargas en los últimos 30 días", "recargas"),
+                   "log_recargado_30": ("monto recargado en los últimos 30 días", "$"),
+                   "log_recarga_mediana": ("recarga típica", "$"),
+                   "dias_sin_recargar": ("días desde su última recarga", "días"),
+                   "pct_noche": ("proporción de recargas de noche (20 a 6 h)", "%"),
+                   "pct_fin_de_semana": ("proporción de recargas en fin de semana", "%")}),
+    "modalidad": dict(
+        sql=MODALIDAD_SQL, ventana=30, paso=7, historia=60, crecimiento=True,
+        num=["solo_prepartido", "log_apuestas_60", "dias_apuesta_30", "dias_sin_apostar", "log_apuesta_mediana", "pct_simples",
+             "selecciones_mediana", "pct_fin_de_semana", "antiguedad_dias", "registrado_desde_julio", "verificado", "edad"],
+        cat=[],
+        etiquetas={**PERFIL_ETQ,
+                   "solo_prepartido": ("apuesta solo prepartido (frente a solo en vivo)", "sí/no"),
+                   "log_apuestas_60": ("apuestas en los últimos 60 días", "apuestas"),
+                   "dias_apuesta_30": ("días con apuesta en los últimos 30", "días"),
+                   "dias_sin_apostar": ("días desde su última apuesta", "días"),
+                   "log_apuesta_mediana": ("apuesta típica", "$"),
+                   "pct_simples": ("proporción de apuestas simples", "%"),
+                   "selecciones_mediana": ("selecciones por apuesta", "selecciones"),
+                   "pct_fin_de_semana": ("proporción de apuestas en fin de semana", "%")}),
 }
 
 
@@ -143,6 +265,21 @@ def preparar(df, modelo):
             df["log_" + c] = np.log1p(df[c].fillna(0).astype(float))
         df["solo_recarga"] = ((df.recargas_60 > 0) & (df.apuestas_60 == 0)).astype(int)
         df["pct_en_vivo"] = df.pct_en_vivo.fillna(0)
+        top = ["YAJUEGO PAGOS", "MOVII PSE", "MOVII BREB", "ASTROPAY"]
+        df["metodo"] = df.metodo.where(df.metodo.isin(top), np.where(df.metodo.isna(), "sin recarga", "otro"))
+    if modelo == "habito":
+        df["tendencia_apuesta"] = df.dias_apuesta_30 - df.dias_apuesta_30_60
+        for c in ["apuestas_30", "apostado_30", "apuesta_mediana"]:
+            df["log_" + c] = np.log1p(df[c].fillna(0).astype(float))
+        for c in ["pct_en_vivo", "pct_simples", "pct_fin_de_semana"]:
+            df[c] = df[c].fillna(0)
+    if modelo == "cruzada_deportes":
+        for c in ["recargas_30", "recargado_30", "recarga_mediana"]:
+            df["log_" + c] = np.log1p(df[c].fillna(0).astype(float))
+    if modelo == "modalidad":
+        for c in ["apuestas_60", "apuesta_mediana"]:
+            df["log_" + c] = np.log1p(df[c].fillna(0).astype(float))
+    if "metodo" in df and modelo != "abandono":
         top = ["YAJUEGO PAGOS", "MOVII PSE", "MOVII BREB", "ASTROPAY"]
         df["metodo"] = df.metodo.where(df.metodo.isin(top), np.where(df.metodo.isna(), "sin recarga", "otro"))
     df["edad"] = df.edad.where(df.edad.between(18, 90))
@@ -260,12 +397,49 @@ def entrenar(con, nombre, cfg, corte, inicio):
     met["ajuste_nivel"] = float(ajustar_nivel(final, va[cols], va.y))
     # Población actual: mismo SQL al corte real (el resultado aún no existe; la columna y se ignora).
     hoy = preparar(datos_corte(con, cfg["sql"], corte), nombre)
+    if cfg.get("crecimiento"):
+        # Crecimiento responsable: fuera quien tiene señales de juego responsable y el 1 % de mayor intensidad.
+        excl = {r[0] for r in con.execute("""
+            SELECT player_id FROM mart.segmento_jugador WHERE senal_revision_juego_responsable
+            UNION SELECT player_id FROM mart.jugador_resumen
+            WHERE apu_monto + rec_monto >= (SELECT quantile_cont(apu_monto + rec_monto, 0.99) FROM mart.jugador_resumen WHERE apu_n + rec_n > 0)
+            """).fetchall()}
+        met["excluidos"] = int(hoy.player_id.isin(excl).sum())
+        hoy = hoy[~hoy.player_id.isin(excl)].copy()
     hoy["probabilidad"] = final.predict_proba(hoy[cols])[:, 1]
     met["factores"] = efectos_en_probabilidad(final, hoy, cfg, met["factores"])
     q80, q50 = hoy.probabilidad.quantile(0.8), hoy.probabilidad.quantile(0.5)
     hoy["banda"] = np.where(hoy.probabilidad >= q80, "alta", np.where(hoy.probabilidad >= q50, "media", "baja"))
     hoy["modelo"] = nombre
     return met, hoy[["player_id", "modelo", "probabilidad", "banda"]]
+
+
+def afinidad_casino(con, corte):
+    """Descriptivo mientras no haya historia para un modelo: de quienes apuestan en deportes desde que hay
+    datos de casino, qué proporción también juega casino, según su forma de apostar."""
+    con.execute(f"SET VARIABLE t_pred = TIMESTAMP '{corte}'")
+    df = con.execute("""
+        WITH d0 AS (SELECT min(fecha_hora) d0 FROM core.casino),
+             a AS (SELECT a.* FROM core.apuesta a, d0 WHERE a.fecha_hora >= d0.d0 AND a.fecha_hora <= getvariable('t_pred') AND coalesce(a.es_prueba, 0) = 0),
+             g AS (SELECT player_id, count(DISTINCT fecha_hora::DATE) dias, avg((live_cod IN (1, 2))::INT) vivo,
+                          avg((hour(fecha_hora) >= 20 OR hour(fecha_hora) < 6)::INT) noche, median(monto_apostado) med
+                   FROM a GROUP BY 1),
+             k AS (SELECT DISTINCT player_id FROM core.casino WHERE fecha_hora <= getvariable('t_pred'))
+        SELECT g.*, (k.player_id IS NOT NULL)::INT casino, (r.player_id IS NOT NULL)::INT nuevo
+        FROM g LEFT JOIN k USING (player_id) LEFT JOIN core.registro r USING (player_id)""").df()
+    grupos = {
+        "Frecuencia": pd.cut(df.dias, [0, 1, 4, 9, 999], labels=["1 día", "2 a 4 días", "5 a 9 días", "10 días o más"]),
+        "Modalidad": np.select([df.vivo == 0, df.vivo == 1], ["Solo prepartido", "Solo en vivo"], "Mixto"),
+        "Horario": np.where(df.noche >= 0.5, "Apuesta sobre todo de noche", "Apuesta sobre todo de día"),
+        "Apuesta típica": pd.cut(df.med, [-1, 5000, 20000, 1e12], labels=["Hasta $5.000", "$5.001 a $20.000", "Más de $20.000"]),
+        "Población": np.where(df.nuevo == 1, "Registrado desde julio", "Base anterior a julio"),
+    }
+    out = []
+    for dim, serie in grupos.items():
+        t = df.groupby(serie, observed=True).casino.agg(["size", "mean"]).reset_index()
+        for r in t.itertuples(index=False):
+            out.append(dict(dimension=dim, grupo=str(r[0]), jugadores=int(r[1]), pct_casino=float(r[2])))
+    return dict(apostadores=int(len(df)), pct_casino=float(df.casino.mean()), grupos=out)
 
 
 def ejecutar(con, corte, inicio):
@@ -287,4 +461,5 @@ def ejecutar(con, corte, inicio):
     con.execute("CREATE OR REPLACE TABLE mart.prediccion_metricas AS SELECT * FROM met_df")
     con.unregister("met_df")
     (REPORT_DIR / "prediccion.json").write_text(json.dumps(metricas, ensure_ascii=False, indent=1, default=str), encoding="utf-8")
+    (REPORT_DIR / "afinidad_casino.json").write_text(json.dumps(afinidad_casino(con, corte), ensure_ascii=False, indent=1), encoding="utf-8")
     return metricas
