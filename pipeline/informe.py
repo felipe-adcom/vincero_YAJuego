@@ -781,6 +781,11 @@ svg rect:hover,svg path:hover{opacity:.8}
 .mcell span{position:absolute;inset:auto 0 2px;text-align:center;font:500 .68rem var(--f-mono);color:var(--fg)}
 a.camp{color:var(--accent);text-decoration:none;font-weight:500;border-bottom:1px dotted currentColor;white-space:nowrap}
 a.camp:hover{border-bottom-style:solid}
+.fbars{display:grid;gap:4px;margin:8px 0 2px}
+.fbar{display:grid;grid-template-columns:minmax(0,150px) minmax(0,1fr) 52px;gap:8px;align-items:center;font-size:.76rem;color:var(--fg2)}
+.fbar i{display:block;height:8px;border-radius:99px;background:var(--grid);overflow:hidden}
+.fbar i b{display:block;height:100%;background:var(--accent);border-radius:99px}
+.fbar em{font-style:normal;font-family:var(--f-mono);color:var(--fg);text-align:right}
 details.how{border:1px solid var(--line);border-radius:8px;background:var(--panel);padding:10px 14px;font-size:.84rem}
 details.how summary{cursor:pointer;font-weight:500;color:var(--fg2)}
 details.how[open] summary{margin-bottom:6px}
@@ -902,16 +907,13 @@ VISTAS_ACTIVACION = r"""<section class="view" id="v-campanas" data-title="Campa�
             <button type="button" data-l="0.25" aria-pressed="true">Base +25 %</button>
             <button type="button" data-l="0.5" aria-pressed="false">Optimista +50 %</button>
           </div></div>
-        <div class="fgroup"><h4><label for="tarifa">Tarifa por SMS (COP)</label></h4>
-          <label class="search"><span class="muted small">$</span><input id="tarifa" type="number" min="0" step="1" placeholder="Tarifa del proveedor" inputmode="numeric"></label></div>
       </div>
-      <div class="g g4" id="sim-tiles">
+      <div class="g g3" id="sim-tiles">
         <div class="tile"><div class="lab">SMS a enviar</div><div class="val" id="s-env">—</div><div class="ft">Uno por jugador. Otros <span id="s-ctl" class="mono">—</span> quedan sin mensaje como grupo de control.</div></div>
         <div class="tile"><div class="lab">Lo que pasaría sin SMS</div><div class="val" id="s-sin">—</div><div class="ft">Recargas o apuestas que ocurrirían sin enviar nada, según lo que hicieron jugadores parecidos en semanas anteriores.</div></div>
         <div class="tile acc"><div class="lab">Lo que agregaría el SMS</div><div class="val" id="s-add">—</div><div class="ft" id="s-add-l">—</div></div>
-        <div class="tile"><div class="lab">Costo por acción adicional</div><div class="val" id="s-cpa">—</div><div class="ft" id="s-cost">Escribe arriba la tarifa por SMS del proveedor para calcularlo.</div></div>
       </div>
-      <div class="tw"><table class="wide"><thead><tr><th>Campaña</th><th>Objetivo</th><th class="num">SMS</th><th class="num">Tasa natural</th><th class="num">Sin SMS</th><th class="num">Con SMS</th><th class="num">Adicionales</th><th class="num">Monto asociado</th><th class="num">Costo / adicional</th><th>¿Se podrá confirmar?</th></tr></thead><tbody id="sim-body"></tbody></table></div>
+      <div class="tw"><table class="wide"><thead><tr><th>Campaña</th><th>Objetivo</th><th class="num">SMS</th><th class="num">Tasa natural</th><th class="num">Sin SMS</th><th class="num">Con SMS</th><th class="num">Adicionales</th><th class="num">Monto asociado</th><th>¿Se podrá confirmar?</th></tr></thead><tbody id="sim-body"></tbody></table></div>
       <div class="note"><b>Lectura de Vincero</b><span>Con efectos de +10 % a +25 %, los más probables para un SMS, una sola ola no alcanza para confirmar resultados. Proponemos leer la ola 1 como piloto, sumar 2 o 3 olas antes de decidir y conseguir los datos de la base histórica para tener más volumen.</span></div>
       <p class="small muted">Tasa natural: lo que hizo un grupo parecido sin SMS, medido desde el {T_SIM} (30 días antes del corte). Monto asociado: acciones adicionales × monto típico de esa acción (recarga o apuesta). «¿Se podrá confirmar?» compara el efecto del escenario con el mínimo que el grupo de control permite detectar.</p>
     </div></section>
@@ -963,7 +965,7 @@ VISTAS_ACTIVACION = r"""<section class="view" id="v-campanas" data-title="Campa�
     <div class="li"><span class="ic crit">1</span><div><b>Lista de consentimiento, autoexclusión y bloqueos</b><span>Cumplimiento · sin ella ninguna audiencia se activa</span></div><span class="pill crit">Bloqueante</span></div>
     <div class="li"><span class="ic crit">2</span><div><b>Aprobación de copies, leyenda +18 y texto de baja</b><span>Legal y CRM</span></div><span class="pill crit">Bloqueante</span></div>
     <div class="li"><span class="ic warn">3</span><div><b>Días faltantes con el export de solicitudes</b><span>Tecnología · casino 1-27 oct, 9-nov y deportes del 11 y 13-nov</span></div><span class="pill warn">Mejora segmentos</span></div>
-    <div class="li"><span class="ic warn">4</span><div><b>Enlaces de destino, acortador con UTM y tarifa por SMS</b><span>CRM y proveedor SMS</span></div><span class="pill warn">Necesario para medir</span></div>
+    <div class="li"><span class="ic warn">4</span><div><b>Enlaces de destino y acortador con UTM</b><span>CRM y proveedor SMS</span></div><span class="pill warn">Necesario para medir</span></div>
     <div class="li"><span class="ic acc">5</span><div><b>Significado de códigos de estado de cuenta y Live = 2</b><span>Tecnología</span></div><span class="pill neu">Validación</span></div>
   </div></div></section>
   <section class="panel"><div class="ph"><h2>Calendario</h2><span class="sub">Semanas de lunes a viernes · festivos: 8-dic y 25-dic</span></div><div class="pb flush"><div class="tw">
@@ -1045,16 +1047,13 @@ JS = r"""
   const nf = (x, d = 0) => Number(x).toLocaleString('es-CO', {maximumFractionDigits: d, minimumFractionDigits: d});
   const money = x => '$' + (x >= 1e6 ? nf(x / 1e6, 1) + ' millones' : nf(x));
   let lift = 0.25;
-  const tarifa = document.getElementById('tarifa');
   const ESC = {0: 'ninguno', 0.1: 'conservador', 0.25: 'base', 0.5: 'optimista'};
   function sim(){
-    const t = parseFloat(tarifa.value);
     let env = 0, ctl = 0, sin = 0, add = 0, monto = 0;
     const rows = camps.map(c => {
       const s0 = c.envio * c.base, s1 = c.envio * c.base * (1 + lift), a = s1 - s0, pp = c.base * lift * 100;
       env += c.envio; ctl += c.control; sin += s0; add += a; monto += a * c.ticket;
       const ok = c.mde !== null && pp >= c.mde;
-      const cpa = (t > 0 && a > 0) ? money(c.envio * t / a) : '—';
       // Ficha de la campaña
       const det = document.querySelector(`.cdet[data-c="${c.c}"]`);
       if(det){
@@ -1071,7 +1070,7 @@ JS = r"""
       }
       return `<tr><td><a class="camp" href="#campana/${c.c}">${c.t}</a></td><td>${c.obj}</td><td class="num">${nf(c.envio)}</td><td class="num">${nf(c.base * 100, 1)} %</td>
         <td class="num">${nf(s0)}</td><td class="num">${nf(s1)}</td><td class="num"><b>+${nf(a)}</b></td><td class="num">${money(a * c.ticket)}</td>
-        <td class="num">${cpa}</td><td>${lift === 0 ? '—' : (ok ? '<span class="pill ok">Sí</span>' : '<span class="pill warn">Piloto</span>')}</td></tr>`;
+        <td>${lift === 0 ? '—' : (ok ? '<span class="pill ok">Sí</span>' : '<span class="pill warn">Piloto</span>')}</td></tr>`;
     });
     document.getElementById('sim-body').innerHTML = rows.join('');
     document.getElementById('s-env').textContent = nf(env);
@@ -1079,15 +1078,12 @@ JS = r"""
     document.getElementById('s-sin').textContent = nf(sin);
     document.getElementById('s-add').textContent = '+' + nf(add);
     document.getElementById('s-add-l').textContent = `Recargas o apuestas extra frente al grupo de control, en el escenario elegido. ≈ ${money(monto)} en recargas o apuestas.`;
-    document.getElementById('s-cpa').textContent = (t > 0 && add > 0) ? money(env * t / add) : '—';
-    document.getElementById('s-cost').textContent = t > 0 ? `La ola cuesta ${money(env * t)}; dividido entre lo que agrega el SMS.` : 'Escribe arriba la tarifa por SMS del proveedor para calcularlo.';
   }
   document.querySelectorAll('#esc button').forEach(b => b.addEventListener('click', () => {
     lift = parseFloat(b.dataset.l);
     document.querySelectorAll('#esc button').forEach(x => x.setAttribute('aria-pressed', x === b ? 'true' : 'false'));
     sim();
   }));
-  tarifa.addEventListener('input', sim);
   sim();
 
   // Constructor de audiencias (cubo agregado)
@@ -1713,7 +1709,7 @@ def construir_html(D):
              obj="Volver a apostar", momento="Cada semana, con variante en vivo o prepartido", salida="Nueva actividad",
              kpi="Retorno en 14 días", vent="14 días", datos=f"Teléfonos de la base histórica (+{n(h.atrasado)} jugadores)"),
         dict(c="ACT05", t="Recordatorio de activación", tipo="Lote semanal",
-             hall=f"Sin mensajes, solo el {CF['tasa_act05'][1]} recarga después del día 7. Es una audiencia grande; el control dirá si el SMS paga su costo.",
+             hall=f"Sin mensajes, solo el {CF['tasa_act05'][1]} recarga después del día 7. Es una audiencia grande; el grupo de control dirá cuánto agrega el SMS.",
              seg="Sin recarga, 8-30 días de registro", regla="historia_completa AND rec_n = 0 AND apu_n = 0 AND depositante = 0 AND antigüedad 8-30 d",
              obj="Primera recarga", momento="Envío único por jugador", salida="Primera recarga",
              kpi="Primera recarga en 14 días", vent="14 días", datos="Medios de pago vigentes y página de ayuda"),
@@ -1817,7 +1813,6 @@ def construir_html(D):
             ("Lista de supresión: consentimiento y autoexclusión", "Ninguna audiencia se activa sin cruzarla.", "Cumplimiento", "crit"),
             ("Validación legal del texto y del horario", 'Leyenda "+18. Juega responsable.", opción de baja y horario de la Ley 2300 de 2023.', "Legal", "crit"),
             ("Enlaces de destino y acortador", "Cada SMS lleva a recargas, a la guía o a deportes; por ahora usa un enlace de ejemplo.", "CRM", "crit"),
-            ("Proveedor y tarifa por SMS", "Sin la tarifa no se puede calcular el costo por acción adicional.", "Mercadeo", "crit"),
         ],
         "alcance": [
             ("Teléfono y consentimiento de la base anterior a julio",
@@ -1851,52 +1846,65 @@ def construir_html(D):
         return f"{x} día" if x == 1 else f"{x} días"
 
     # Cómo leer cada factor: título, frase con probabilidades concretas y acción. {lo}/{hi}: valores; {plo}/{phi}: probabilidades.
-    # Cada factor: título, comparación corta (probabilidad con valor bajo · alto) y acción en una línea.
+    # Cada factor: (título, quién es el grupo A, quién es el grupo B, etiqueta corta A, etiqueta corta B, qué hacer).
+    # A es el valor bajo del factor (o "no") y B el alto (o "sí").
+    NUEVO = ("Jugador nuevo o de la base histórica", "Un jugador de la base anterior a julio", "uno registrado desde julio",
+             "Base anterior a julio", "Registrado desde julio")
+    VERIF = ("Celular verificado", "Quien no ha verificado su celular", "quien sí lo verificó", "Sin verificar", "Verificado")
     FACTORES_TXT = {
         "abandono": {
-            "dias_activos_30": ("Frecuencia en el último mes", "Jugó {lo_d} de 30: {plo} · jugó {hi_d}: {phi}",
-                                "Priorizar en RET04 a quienes jugaron pocos días."),
-            "dias_sin_actividad": ("Días sin jugar", "{lo_d} sin jugar: {plo} · {hi_d}: {phi}",
-                                   "Enviar RET04 entre el día 7 y el 14 sin jugar."),
-            "verificado": ("Celular verificado", "Sin verificar: {plo} · verificado: {phi}",
-                           "Pedir la verificación del celular al registrarse."),
-            "antiguedad_dias": ("Tiempo como jugador", "{lo_d}: {plo} · {hi_d}: {phi}",
-                                "Acompañar los dos primeros meses (ONB02)."),
-            "registrado_desde_julio": ("Nuevo o histórico", "Base histórica: {plo} · registrado desde julio: {phi}",
-                                       "Hacer seguimiento a los nuevos en sus primeras semanas."),
+            "dias_activos_30": ("Días que jugó en el último mes", "Quien recargó o apostó solo {lo_d} de los últimos 30", "quien jugó {hi_d}",
+                                "{lo_d} de 30", "{hi_d} de 30", "Priorizar en RET04 a quienes jugaron pocos días en el último mes."),
+            "dias_sin_actividad": ("Días sin jugar", "Quien jugó hace {lo_d}", "quien lleva {hi_d} sin recargar ni apostar",
+                                   "{lo_d} sin jugar", "{hi_d} sin jugar", "Enviar RET04 entre el día 7 y el 14 sin jugar, antes de que el riesgo siga subiendo."),
+            "verificado": VERIF + ("Pedir la verificación del celular al registrarse.",),
+            "antiguedad_dias": ("Tiempo como jugador", "Quien empezó a jugar hace {lo_d}", "quien empezó hace {hi_d}",
+                                "{lo_d} jugando", "{hi_d} jugando", "Acompañar los dos primeros meses con ONB02 y mensajes de servicio."),
+            "registrado_desde_julio": NUEVO + ("Hacer seguimiento a los nuevos en sus primeras semanas.",),
         },
         "activacion": {
-            "aposto_sin_recargar": ("Ya apostó sin recargar", "No ha apostado: {plo} · ya apostó: {phi}",
-                                    "Darles prioridad en ACT01."),
-            "verificado": ("Celular verificado", "Sin verificar: {plo} · verificado: {phi}",
-                           "Recordar la verificación del celular en la invitación a recargar."),
-            "dias_desde_registro": ("Días desde el registro", "{lo_d}: {plo} · {hi_d}: {phi}",
-                                    "Enviar ACT01 en las primeras 24-72 h."),
-            "telefono_valido": ("Teléfono válido", "Inválido: {plo} · válido: {phi}",
-                                "Validar el celular en el formulario de registro."),
+            "aposto_sin_recargar": ("Ya apostó sin recargar", "Quien no ha hecho ninguna apuesta", "quien ya apostó aunque no ha recargado",
+                                    "No ha apostado", "Ya apostó", "Ponerlos primero en ACT01."),
+            "verificado": VERIF + ("Incluir en ACT01 un recordatorio para verificar el celular.",),
+            "dias_desde_registro": ("Días desde el registro", "Quien se registró hace {lo_d}", "quien se registró hace {hi_d}",
+                                    "{lo_d} desde el registro", "{hi_d} desde el registro",
+                                    "Enviar ACT01 en las primeras 24-72 h; después del día 21 casi nadie hace su primera recarga."),
+            "telefono_valido": ("Teléfono válido", "Quien registró un teléfono inválido o incompleto", "quien registró uno válido",
+                                "Teléfono inválido", "Teléfono válido", "Validar el formato del celular en el formulario de registro."),
         },
-    }
-    FACTORES_TXT.update({
         "habito": {
-            "dias_sin_apostar": ("Días desde su última apuesta", "{lo_d}: {plo} · {hi_d}: {phi}", "Contactar la misma semana de su última apuesta."),
-            "dias_apuesta_30": ("Días con apuesta en el último mes", "{lo_d} de 30: {plo} · {hi_d}: {phi}", "Empezar por quien ya apuesta 2 a 4 días al mes."),
-            "registrado_desde_julio": ("Nuevo o histórico", "Base histórica: {plo} · registrado desde julio: {phi}", ""),
-            "tendencia_apuesta": ("Cambio frente al mes anterior", "{lo_s} días con apuesta: {plo} · {hi_s} días: {phi}", ""),
+            "dias_sin_apostar": ("Días desde su última apuesta", "Quien apostó hace {lo_d}", "quien lleva {hi_d} sin apostar",
+                                 "{lo_d} sin apostar", "{hi_d} sin apostar", "Contactar la misma semana de su última apuesta."),
+            "dias_apuesta_30": ("Días que apostó en el último mes", "Quien apostó {lo_d} de los últimos 30", "quien apostó {hi_d}",
+                                "{lo_d} de 30", "{hi_d} de 30", "Empezar por quienes ya apuestan 2 a 4 días al mes."),
+            "registrado_desde_julio": NUEVO + ("",),
+            "tendencia_apuesta": ("Cambio frente al mes anterior", "Quien apostó {lo_c}", "quien apostó {hi_c}", "{lo_c}", "{hi_c}", ""),
+            "antiguedad_dias": ("Tiempo como jugador", "Quien empezó a jugar hace {lo_d}", "quien empezó hace {hi_d}",
+                                "{lo_d} jugando", "{hi_d} jugando", ""),
         },
         "cruzada_deportes": {
-            "log_recargas_30": ("Recargas en el último mes", "{lo_n}: {plo} · {hi_n}: {phi}", "Empezar por quienes recargan pocas veces al mes."),
-            "verificado": ("Celular verificado", "Sin verificar: {plo} · verificado: {phi}", ""),
-            "registrado_desde_julio": ("Nuevo o histórico", "Base histórica: {plo} · registrado desde julio: {phi}", ""),
+            "log_recargas_30": ("Recargas en el último mes", "Quien recargó {lo_v} en los últimos 30 días", "quien recargó {hi_v}",
+                                "{lo_v}", "{hi_v}", "Empezar por quienes recargan pocas veces al mes."),
+            "verificado": VERIF + ("",),
+            "log_recargado_30": ("Monto recargado en el último mes", "Quien recargó {lo_m} en los últimos 30 días", "quien recargó {hi_m}",
+                                 "{lo_m}", "{hi_m}", ""),
+            "registrado_desde_julio": NUEVO + ("",),
+            "antiguedad_dias": ("Tiempo como jugador", "Quien empezó a jugar hace {lo_d}", "quien empezó hace {hi_d}",
+                                "{lo_d} jugando", "{hi_d} jugando", ""),
         },
         "modalidad": {
-            "solo_prepartido": ("Modalidad actual", "Solo en vivo → prueba prepartido: {plo} · solo prepartido → prueba en vivo: {phi}",
-                                "Probar primero con quienes solo apuestan en vivo."),
-            "dias_sin_apostar": ("Días desde su última apuesta", "{lo_d}: {plo} · {hi_d}: {phi}", "Proponerla mientras el jugador sigue activo."),
-            "registrado_desde_julio": ("Nuevo o histórico", "Base histórica: {plo} · registrado desde julio: {phi}", ""),
+            "solo_prepartido": ("Modalidad que usa hoy", "Quien solo apuesta en vivo", "quien solo apuesta prepartido",
+                                "Solo en vivo", "Solo prepartido", "Probar primero con quienes solo apuestan en vivo, llevándolos a prepartido."),
+            "dias_sin_apostar": ("Días desde su última apuesta", "Quien apostó hace {lo_d}", "quien lleva {hi_d} sin apostar",
+                                 "{lo_d} sin apostar", "{hi_d} sin apostar", "Proponer la otra modalidad mientras el jugador sigue activo."),
+            "registrado_desde_julio": NUEVO + ("",),
+            "verificado": VERIF + ("",),
+            "pct_simples": ("Apuestas simples", "Quien solo hace combinadas", "quien hace {hi_p} de apuestas simples",
+                            "Solo combinadas", "{hi_p} simples", ""),
         },
-    })
+    }
     PRED_TXT = {
-        "abandono": dict(titulo="Abandono en 30 días", pob="jugadores activos en los últimos 30 días",
+        "abandono": dict(titulo="Abandono en 30 días", ev_largo="dejar de recargar y apostar en los próximos 30 días", pob="jugadores activos en los últimos 30 días",
                          evento="dejarían de jugar", corto="de los abandonos", banda="Riesgo alto", prob="Probabilidad de irse",
                          auc_tip="Entre un jugador que se fue y uno que siguió, el modelo le da más riesgo al que se fue {} de cada 100 veces.",
                          pasos=['RET04: en el <a href="#audiencias">Constructor</a>, filtra «Riesgo de abandono alto» y «Enfriándose».',
@@ -1904,21 +1912,21 @@ def construir_html(D):
                                 'Para los de riesgo alto sin teléfono, pedir sus datos a YAjuego (<a href="#ajustes">Pendientes</a>).'],
                          accion={"3_activo": "Mensajes de servicio", "4_enfriandose": "RET04",
                                  "2_nuevo_en_activacion": "ONB02", "5_inactivo_31_60": "REC06"}),
-        "activacion": dict(titulo="Primera recarga en 14 días", pob="registrados sin recarga en los últimos 30 días",
+        "activacion": dict(titulo="Primera recarga en 14 días", ev_largo="hacer su primera recarga en los próximos 14 días", pob="registrados sin recarga en los últimos 30 días",
                            evento="harían su primera recarga", corto="de las primeras recargas", banda="Probabilidad alta", prob="Probabilidad de recargar",
                            auc_tip="Entre un registrado que recargó y uno que no, el modelo le da más probabilidad al que recargó {} de cada 100 veces.",
                            pasos=['ACT01 y ACT05: en el <a href="#audiencias">Constructor</a>, empieza por «Prob. de activarse alta».',
                                   "Con probabilidad baja y más de 21 días desde el registro, enviar solo como prueba con control.",
                                   "Automatizar la carga diaria para enviar ACT01 entre 24 y 72 h después del registro."],
                            accion={"1_nuevo_sin_actividad": "ACT01 (0-7 días) · ACT05 (8-30 días)"}),
-        "habito": dict(titulo="Volverse habitual en 30 días", pob="apostadores ocasionales (1 a 4 días al mes)",
+        "habito": dict(titulo="Volverse habitual en 30 días", ev_largo="apostar 5 días o más el próximo mes", pob="apostadores ocasionales (1 a 4 días al mes)",
                        evento="apostarían 5 días o más", corto="de los nuevos habituales", banda="Probabilidad alta", prob="Probabilidad de volverse habitual",
                        auc_tip="Entre un ocasional que se volvió habitual y uno que no, el modelo le da más probabilidad al primero {} de cada 100 veces.",
                        pasos=['En el <a href="#audiencias">Constructor</a>, filtra «Oportunidad: volverse habitual».',
                               "Mensaje: agenda de partidos en su modalidad preferida, sin bonos.",
                               "Máximo un SMS por semana."],
                        accion={"3_activo": "Agenda deportiva semanal", "4_enfriandose": "RET04 con agenda"}),
-        "cruzada_deportes": dict(titulo="Primera apuesta deportiva en 30 días", pob="jugadores que recargan y no apuestan en deportes",
+        "cruzada_deportes": dict(titulo="Primera apuesta deportiva en 30 días", ev_largo="hacer su primera apuesta deportiva en los próximos 30 días", pob="jugadores que recargan y no apuestan en deportes",
                                  evento="harían su primera apuesta deportiva", corto="de las primeras apuestas deportivas", banda="Probabilidad alta",
                                  prob="Probabilidad de apostar en deportes",
                                  auc_tip="Entre un jugador que probó deportes y uno que no, el modelo le da más probabilidad al primero {} de cada 100 veces.",
@@ -1926,7 +1934,7 @@ def construir_html(D):
                                         "Mensaje: cómo funciona una apuesta simple y la agenda del fin de semana.",
                                         "Dejar fuera a quien juega casino a diario."],
                                  accion={"3_activo": "XS03", "2_nuevo_en_activacion": "XS03", "4_enfriandose": "XS03 con agenda"}),
-        "modalidad": dict(titulo="Probar la otra modalidad en 30 días", pob="apostadores que solo usan prepartido o solo en vivo",
+        "modalidad": dict(titulo="Probar la otra modalidad en 30 días", ev_largo="probar la otra modalidad en los próximos 30 días", pob="apostadores que solo usan prepartido o solo en vivo",
                           evento="probarían la otra modalidad", corto="de los cambios de modalidad", banda="Probabilidad alta",
                           prob="Probabilidad de probar la otra modalidad",
                           auc_tip="Entre un apostador que probó la otra modalidad y uno que no, el modelo le da más probabilidad al primero {} de cada 100 veces.",
@@ -1936,20 +1944,37 @@ def construir_html(D):
                           accion={"3_activo": "Variante por modalidad", "4_enfriandose": "RET04 con variante"}),
     }
 
-    def frase(f, k):
-        t = FACTORES_TXT[k].get(f["variable"])
-        vals = dict(lo_d=dias(f["desde"]), hi_d=dias(f["hasta"]), plo=pct(f["p_desde"], 0 if f["p_desde"] >= 0.1 else 1),
-                    phi=pct(f["p_hasta"], 0 if f["p_hasta"] >= 0.1 else 1), lo_n=n(f["desde"]), hi_n=n(f["hasta"]),
-                    lo_p=pct(f["desde"], 0), hi_p=pct(f["hasta"], 0), lo_m=cop(round(f["desde"], -3)), hi_m=cop(round(f["hasta"], -3)),
-                    lo_s=f"{'+' if f['desde'] > 0 else ''}{n(f['desde'])}", hi_s=f"{'+' if f['hasta'] > 0 else ''}{n(f['hasta'])}")
+    def cambio(x):
+        x = int(round(x))
+        if x == 0:
+            return "los mismos días que el mes anterior"
+        return f"{abs(x)} {'día' if abs(x) == 1 else 'días'} {'más' if x > 0 else 'menos'} que el mes anterior"
+
+    def veces(x):
+        x = int(round(x))
+        return f"{x} vez" if x == 1 else f"{x} veces"
+
+    def frase(f, k, ev):
+        """Título, frase completa, etiquetas de las dos barras y acción."""
+        t = FACTORES_TXT.get(k, {}).get(f["variable"])
+        pl, ph = f["p_desde"], f["p_hasta"]
+        v = dict(lo_d=dias(f["desde"]), hi_d=dias(f["hasta"]), lo_v=veces(f["desde"]), hi_v=veces(f["hasta"]),
+                 lo_m=cop(round(f["desde"], -3)), hi_m=cop(round(f["hasta"], -3)), lo_c=cambio(f["desde"]), hi_c=cambio(f["hasta"]),
+                 lo_p=pct(f["desde"], 0), hi_p=pct(f["hasta"], 0))
         if t:
-            return t[0], t[1].format(**vals), t[2]
-        u = f["unidad"]
-        lo, hi = {"días": ("lo_d", "hi_d"), "%": ("lo_p", "hi_p"), "$": ("lo_m", "hi_m")}.get(u, ("lo_n", "hi_n"))
-        if u == "sí/no":
-            return f["nombre"].capitalize(), f"No: {vals['plo']} · sí: {vals['phi']}", ""
-        sufijo = "" if u in ("días", "%", "$") else f" {u}"
-        return f["nombre"].capitalize(), f"{vals[lo]}{sufijo}: {vals['plo']} · {vals[hi]}{sufijo}: {vals['phi']}", ""
+            tit, a, b, ca, cb, acc = t
+            a, b, ca, cb = (x.format(**v) for x in (a, b, ca, cb))
+        else:
+            u = f["unidad"]
+            lo, hi = {"días": ("lo_d", "hi_d"), "%": ("lo_p", "hi_p"), "$": ("lo_m", "hi_m")}.get(u, ("lo_d", "hi_d"))
+            tit = f["nombre"].capitalize()
+            ca, cb = (("No", "Sí") if u == "sí/no" else (v[lo], v[hi]))
+            a, b, acc = f"Con {ca.lower()}", f"con {cb.lower()}", ""
+        fp = lambda x: pct(x, 0 if x >= 0.1 else 1)  # noqa: E731
+        r = max(pl, ph) / max(min(pl, ph), 1e-9)
+        dif = f" La probabilidad es {n(r, 1)} veces {'mayor' if ph > pl else 'menor'} en el segundo grupo." if r >= 1.25 else ""
+        txt = f"{a} tiene {fp(pl)} de probabilidad de {ev}; {b}, {fp(ph)}.{dif}"
+        return tit, txt, (ca, fp(pl), pl), (cb, fp(ph), ph), acc
 
     bloques = {}
     for m in D["pred"]:
@@ -1977,12 +2002,16 @@ def construir_html(D):
         sel = [f for f in m["factores"] if abs(f["diferencia"]) >= (0.02 if k == "abandono" else 0.005) and abs(f["diferencia"]) >= 0.15 * max(abs(x["diferencia"]) for x in m["factores"])][:5]
         otros = [f["nombre"] for f in m["factores"] if f not in sel]
         fac = ""
+        pmax = max(max(f["p_desde"], f["p_hasta"]) for f in sel) if sel else 1
         for f in sel:
-            tit, txt, acc = frase(f, k)
+            tit, txt, ga, gb, acc = frase(f, k, tx["ev_largo"])
+            barras = "".join(f'<div class="fbar"><span>{esc(lbl)}</span><i><b style="width:{max(2, 100 * val / pmax):.0f}%"></b></i><em>{txt_p}</em></div>'
+                             for lbl, txt_p, val in (ga, gb))
             sube = f["p_hasta"] > f["p_desde"]
             malo = sube == (k == "abandono")
             fac += (f'<div class="li"><span class="ic {"crit" if malo else "ok"}">{"↑" if sube else "↓"}</span><div><b>{esc(tit)}</b>'
-                    f'<span class="mono" style="display:block">{txt}</span>' + (f'<span style="display:block;color:var(--accent)">→ {acc}</span>' if acc else '')
+                    f'<span style="display:block">{txt}</span><div class="fbars">{barras}</div>'
+                    + (f'<span class="todo" style="margin-top:6px"><b>Qué hacer</b><span>{acc}</span></span>' if acc else '')
                     + '</div><span></span></div>')
         pasos = "".join(f"<li>{x}</li>" for x in tx["pasos"])
         azar = "al azar se llegaría al 20 %"
@@ -2350,7 +2379,7 @@ def construir_html(D):
   {pend_html}
   <div class="g g2">
     <section class="panel"><div class="ph"><h2>Riesgos de la propuesta</h2></div><div class="pb flush"><div class="list">
-      <div class="li"><span class="ic warn">1</span><div><b>El piloto se enfoca en jugadores de menor valor</b><span>La mayoría de los envíos va a registrados sin recarga, que sin mensajes recargan entre el {CF['tasa_act05'][1]} y el {CF['tasa_act01'][1]}. El control dirá si el SMS paga su costo.</span></div><span></span></div>
+      <div class="li"><span class="ic warn">1</span><div><b>El piloto se enfoca en jugadores de menor valor</b><span>La mayoría de los envíos va a registrados sin recarga, que sin mensajes recargan entre el {CF['tasa_act05'][1]} y el {CF['tasa_act01'][1]}. El grupo de control dirá cuánto agrega el SMS.</span></div><span></span></div>
       <div class="li"><span class="ic warn">2</span><div><b>Sin carga diaria, la activación llega tarde</b><span>El {n(pct_24h, 0)} % de quienes recargan lo hace en las primeras 24 h. ACT01 no debería operar sin carga diaria.</span></div><span></span></div>
       <div class="li"><span class="ic warn">3</span><div><b>XS03 puede incomodar a jugadores de casino</b><span>Sin datos de casino del 1 al 27-oct no se puede identificar del todo a quien juega casino de forma habitual.</span></div><span></span></div>
       <div class="li"><span class="ic warn">4</span><div><b>Campañas de retención pequeñas</b><span>RET04 y REC06 suman {n(cam.loc['RET04'].seleccionados + cam.loc['REC06'].seleccionados)} jugadores: alcanzan para probar mensajes, pero no para sacar conclusiones.</span></div><span></span></div>
