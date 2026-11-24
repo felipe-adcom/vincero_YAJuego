@@ -11,7 +11,7 @@ la base, las audiencias, las tablas de resultados y la aplicación con cifras de
 
 ```
 data/raw/          originales intactos (no versionados: contienen datos personales)
-data/warehouse/    yajuego.duckdb: stg, core, mart (corte operativo), base (foto de análisis), meta
+data/warehouse/    yajuego.duckdb: stg, core, mart (al corte) y meta (manifiesto, controles, cobertura por día)
 data/exports/      perfil por jugador, audiencias SMS y libro Excel (no versionados)
 sql/               transformación, perfil por jugador, segmentos y audiencias
 pipeline/          ingesta, orquestador, controles, exportes, análisis, diccionario y app
@@ -27,19 +27,18 @@ docs/              arquitectura y modelo
 pip install duckdb pandas python-calamine openpyxl matplotlib
 cp /ruta/a/los/excel/*.xlsx data/raw/          # sin renombrar: la fuente se reconoce por las columnas
 python pipeline/run.py                          # ingesta + reconstrucción + controles + exportes + app
-python pipeline/run.py --corte "2026-11-30 23:59:59"   # recalcular a otra fecha de corte
+python pipeline/run.py --corte "2026-11-30 23:59:59"   # fijar otra fecha de corte
 python tests/test_ingesta.py                    # idempotencia, duplicados y correcciones
 ```
 
-Fechas en `pipeline/config.py`:
-
-- `FECHA_CORTE`: corte operativo de segmentos, audiencias y campañas (esquema `mart`).
-- `FIN_ANALISIS`: fin del último mes completo; el análisis descriptivo usa esta foto (esquema `base`).
+Todo se calcula sobre la base completa, desde `INICIO_OBSERVACION` hasta el corte. El corte es, por
+defecto, el último día con datos cargados: cada carga nueva recalcula análisis, insights, segmentos,
+audiencias y campañas. Los promedios por día solo usan días completos de cada fuente (`meta.cobertura_dia`).
 
 ## Incorporar datos nuevos
 
 1. Copiar los Excel (mensuales o diarios) a `data/raw/`.
-2. Ejecutar `python pipeline/run.py --corte "<último día completo> 23:59:59"`.
+2. Ejecutar `python pipeline/run.py` (el corte se mueve solo al último día cargado).
 3. Revisar `reports/controles.csv`: debe decir 0 fallas (si hay fallas, el proceso termina con código 1).
 4. Tomar las audiencias de `data/exports/audiencias/` y cruzarlas con la lista de supresión
    (consentimiento y autoexclusión) antes de enviar.
@@ -54,7 +53,7 @@ diario que empieza después de la 01:00 o termina antes de las 23:00 se marca co
 |---|---|
 | Ingesta idempotente: fuente por columnas, periodo por contenido, hash y manifiesto | Carga diaria automática desde el back office |
 | Duplicados exactos y reemplazo de periodos corregidos | Integración con el proveedor SMS (envíos, entregas, clics) |
-| Capas stg → core → mart/base con trazabilidad por archivo y fila | Lista de supresión: autoexclusión, consentimiento, bloqueos |
+| Capas stg → core → mart con trazabilidad por archivo y fila | Lista de supresión: autoexclusión, consentimiento, bloqueos |
 | Casino integrado en actividad, segmentos y controles | Maestro histórico de jugadores con teléfono |
 | Perfil por jugador con 100+ indicadores y corte explícito | Disparadores en tiempo real (registro sin recarga en 24-72 h) |
 | 7 segmentos de ciclo de vida, etiquetas y 6 audiencias con control determinístico (20 %) | Tablero conectado a la base |

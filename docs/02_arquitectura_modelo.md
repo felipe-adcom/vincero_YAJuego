@@ -40,7 +40,7 @@ flowchart LR
 
 ```mermaid
 erDiagram
-  JUGADOR ||--o| REGISTRO : "atributos (solo registrados jul-sep)"
+  JUGADOR ||--o| REGISTRO : "atributos (solo registrados desde julio)"
   JUGADOR ||--o{ RECARGA : realiza
   JUGADOR ||--o{ RETIRO : solicita
   JUGADOR ||--o{ APUESTA : coloca
@@ -100,15 +100,18 @@ Ver `reports/controles.csv` (se regenera en cada corrida). Se controla:
 
 Si un control falla, `run.py` termina con código 1.
 
-## Dos fotos: operación y análisis
+## Una sola base, recalculada en cada carga
 
-| Esquema | Fecha | Uso |
-|---|---|---|
-| `mart.*` | `config.FECHA_CORTE` (corte operativo, se mueve con cada carga) | Segmentos, audiencias y campañas |
-| `base.*` | `config.FIN_ANALISIS` (último mes completo) | Análisis descriptivo, comparaciones mensuales e insights |
+Todo (análisis, insights, segmentos, audiencias y campañas) usa la base completa, desde
+`config.INICIO_OBSERVACION` hasta el corte. Por defecto el corte es el último día con datos cargados,
+así que cada carga nueva mueve el corte y recalcula todo; `--corte` permite fijar otra fecha.
 
-`base.*` se construye con las mismas reglas (`20_mart.sql` y `30_segmentos.sql`) a otra fecha, así los
-indicadores del análisis no mezclan meses completos con días sueltos.
+Los promedios por día (actividad diaria, comparación mensual, día y hora, tendencia semanal) usan solo
+los días que cada fuente tiene completos según `meta.cobertura_dia`. Así un archivo parcial o un día sin
+archivo no hacen parecer que cayó la actividad.
+
+Las tasas de respuesta sin SMS de cada campaña se miden con un corte simulado 30 días antes del corte:
+qué hizo cada grupo equivalente en los días siguientes, sin ningún mensaje.
 
 ## Archivos diarios y casino
 

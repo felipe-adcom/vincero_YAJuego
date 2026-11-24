@@ -1,7 +1,8 @@
 """Análisis descriptivo: tablas (CSV) y gráficos (PNG) sin datos personales.
 
-Se regenera en cada corrida de run.py. Describe el periodo base (último mes completo,
-config.FIN_ANALISIS) para no mezclar meses parciales; el ciclo de vida usa el corte operativo.
+Se regenera en cada corrida de run.py con toda la base, desde el inicio de la observación hasta el corte.
+Los promedios por día (actividad diaria, comparación mensual, día y hora) usan solo los días que cada
+fuente tiene completos según meta.cobertura_dia, para que un archivo parcial o faltante no los sesgue.
 Salidas en reports/tablas/ y reports/figuras/.
 """
 import matplotlib
@@ -47,14 +48,17 @@ def _miles(x, _=None):
 def generar_reporte(con):
     (REPORT_DIR / "figuras").mkdir(parents=True, exist_ok=True)
     (REPORT_DIR / "tablas").mkdir(parents=True, exist_ok=True)
-    M = "base.jugador_resumen"   # análisis descriptivo: foto al último mes completo
-    # El análisis describe la ventana hasta el fin del periodo base; lo posterior va al módulo de seguimiento.
-    for vista, tabla, col in [("v_recarga", "core.recarga", "fecha_hora"), ("v_apuesta", "core.apuesta", "fecha_hora"),
-                              ("v_retiro", "core.retiro", "fecha_ultima_actualizacion"), ("v_registro", "core.registro", "fecha_registro")]:
-        con.execute(f"CREATE OR REPLACE TEMP VIEW {vista} AS SELECT * FROM {tabla} WHERE {col} <= getvariable('fin_analisis')")
+    M = "mart.jugador_resumen"
+    for vista, tabla, col, fuente in [("v_recarga", "core.recarga", "fecha_hora", "recargas"), ("v_apuesta", "core.apuesta", "fecha_hora", "apuestas"),
+                                      ("v_retiro", "core.retiro", "fecha_ultima_actualizacion", "retiros"),
+                                      ("v_registro", "core.registro", "fecha_registro", "registros"), ("v_casino", "core.casino", "fecha_hora", "casino")]:
+        con.execute(f"CREATE OR REPLACE TEMP VIEW {vista} AS SELECT * FROM {tabla} WHERE {col} <= getvariable('corte')")
+        # Misma vista restringida a los días que esa fuente tiene completos (para promedios por día).
+        con.execute(f"""CREATE OR REPLACE TEMP VIEW {vista}_dc AS SELECT t.* FROM {vista} t
+                        JOIN meta.cobertura_dia c ON c.dia = t.{col}::DATE AND c.fuente = '{fuente}' AND c.estado = 'completo'""")
 
     _tabla(con, "01_cobertura_fuentes", f"""
-        SELECT CASE WHEN en_registros THEN 'Registrados jul-sep (con datos de contacto)'
+        SELECT CASE WHEN en_registros THEN 'Registrados desde julio (con datos de contacto)'
                     ELSE 'Base anterior a julio (sin datos de contacto)' END AS poblacion,
                count(*) jugadores, sum((rec_n>0)::INT) con_recarga, sum((apu_n>0)::INT) con_apuesta,
                sum((ret_n>0)::INT) con_retiro, sum(rec_n) recargas, sum(rec_monto) monto_recargas,
@@ -103,10 +107,13 @@ def generar_reporte(con):
     _save(fig, "02_tiempo_primera_recarga.png")
 
     d = _tabla(con, "04_actividad_diaria", """
-        SELECT r.dia, r.recargas, r.monto_recargas, a.apuestas, a.monto_apostado, a.apostadores
-        FROM (SELECT fecha_hora::DATE dia, count(*) recargas, sum(monto) monto_recargas FROM v_recarga GROUP BY 1) r
-        JOIN (SELECT fecha_hora::DATE dia, count(*) apuestas, sum(monto_apostado) monto_apostado,
-                     count(DISTINCT player_id) apostadores FROM v_apuesta GROUP BY 1) a USING (dia)
+        WITH dias AS (SELECT DISTINCT dia FROM meta.cobertura_dia),
+             r AS (SELECT fecha_hora::DATE dia, count(*) recargas, sum(monto) monto_recargas FROM v_recarga_dc GROUP BY 1),
+             a AS (SELECT fecha_hora::DATE dia, count(*) apuestas, sum(monto_apostado) monto_apostado,
+                          count(DISTINCT player_id) apostadores FROM v_apuesta_dc GROUP BY 1),
+             k AS (SELECT fecha_hora::DATE dia, count(*) rondas_casino, sum(monto_apostado) monto_casino FROM v_casino_dc GROUP BY 1)
+        SELECT dias.dia, r.recargas, r.monto_recargas, a.apuestas, a.monto_apostado, a.apostadores, k.rondas_casino, k.monto_casino
+        FROM dias LEFT JOIN r USING (dia) LEFT JOIN a USING (dia) LEFT JOIN k USING (dia)
         ORDER BY dia""")
     fig, axs = plt.subplots(2, 1, figsize=(8, 4.6), sharex=True)
     for ax, col, titulo in [(axs[0], "apuestas", "Apuestas deportivas por día"), (axs[1], "recargas", "Recargas por día")]:
@@ -119,32 +126,49 @@ def generar_reporte(con):
     _save(fig, "03_actividad_diaria.png")
 
     _tabla(con, "05_comparacion_mensual", """
-        WITH r AS (SELECT strftime(fecha_hora,'%Y-%m') mes, count(*) recargas, sum(monto) monto_recargas,
-                          count(DISTINCT player_id) jugadores_recarga, count(DISTINCT fecha_hora::DATE) dias FROM v_recarga GROUP BY 1),
+        WITH c AS (SELECT strftime(dia,'%Y-%m') mes, fuente, count(*) FILTER (WHERE estado='completo') dc, count(*) dias
+                   FROM meta.cobertura_dia GROUP BY 1, 2),
+             cp AS (PIVOT c ON fuente USING first(dc) GROUP BY mes),
+             nd AS (SELECT mes, max(dias) dias FROM c GROUP BY 1),
+             r AS (SELECT strftime(fecha_hora,'%Y-%m') mes, count(*) recargas, sum(monto) monto_recargas,
+                          count(DISTINCT player_id) jugadores_recarga FROM v_recarga GROUP BY 1),
+             rd AS (SELECT strftime(fecha_hora,'%Y-%m') mes, count(*) n, sum(monto) m FROM v_recarga_dc GROUP BY 1),
              a AS (SELECT strftime(fecha_hora,'%Y-%m') mes, count(*) apuestas, sum(monto_apostado) monto_apostado,
                           count(DISTINCT player_id) apostadores FROM v_apuesta GROUP BY 1),
-             t AS (SELECT strftime(fecha_ultima_actualizacion,'%Y-%m') mes, count(*) retiros, sum(monto_neto) monto_retiros,
-                          count(DISTINCT player_id) jugadores_retiro FROM v_retiro GROUP BY 1),
-             g AS (SELECT strftime(fecha_registro,'%Y-%m') mes, count(*) registros FROM v_registro GROUP BY 1)
-        SELECT mes, dias, registros, round(registros/dias) registros_dia,
-               recargas, round(recargas/dias) recargas_dia, round(monto_recargas/dias) monto_recargas_dia, jugadores_recarga,
-               apuestas, round(apuestas/dias) apuestas_dia, round(monto_apostado/dias) monto_apostado_dia, apostadores,
-               retiros, round(monto_retiros/dias) monto_retiros_dia, jugadores_retiro
-        FROM r JOIN a USING (mes) JOIN t USING (mes) JOIN g USING (mes) ORDER BY mes""")
+             ad AS (SELECT strftime(fecha_hora,'%Y-%m') mes, count(*) n, sum(monto_apostado) m FROM v_apuesta_dc GROUP BY 1),
+             t AS (SELECT strftime(fecha_ultima_actualizacion,'%Y-%m') mes, count(*) retiros, count(DISTINCT player_id) jugadores_retiro
+                   FROM v_retiro GROUP BY 1),
+             td AS (SELECT strftime(fecha_ultima_actualizacion,'%Y-%m') mes, sum(monto_neto) m FROM v_retiro_dc GROUP BY 1),
+             g AS (SELECT strftime(fecha_registro,'%Y-%m') mes, count(*) registros FROM v_registro GROUP BY 1),
+             gd AS (SELECT strftime(fecha_registro,'%Y-%m') mes, count(*) n FROM v_registro_dc GROUP BY 1),
+             kd AS (SELECT strftime(fecha_hora,'%Y-%m') mes, sum(monto_apostado) m FROM v_casino_dc GROUP BY 1)
+        SELECT nd.mes, nd.dias, cp.registros dias_registros, cp.recargas dias_recargas, cp.apuestas dias_apuestas,
+               cp.casino dias_casino, cp.retiros dias_retiros,
+               g.registros, round(gd.n / nullif(cp.registros, 0)) registros_dia,
+               r.recargas, round(rd.n / nullif(cp.recargas, 0)) recargas_dia, round(rd.m / nullif(cp.recargas, 0)) monto_recargas_dia,
+               r.jugadores_recarga,
+               a.apuestas, round(ad.n / nullif(cp.apuestas, 0)) apuestas_dia, round(ad.m / nullif(cp.apuestas, 0)) monto_apostado_dia,
+               a.apostadores,
+               round(kd.m / nullif(cp.casino, 0)) monto_casino_dia,
+               t.retiros, round(td.m / nullif(cp.retiros, 0)) monto_retiros_dia, t.jugadores_retiro
+        FROM nd LEFT JOIN cp USING (mes) LEFT JOIN r USING (mes) LEFT JOIN rd USING (mes) LEFT JOIN a USING (mes)
+             LEFT JOIN ad USING (mes) LEFT JOIN t USING (mes) LEFT JOIN td USING (mes) LEFT JOIN g USING (mes)
+             LEFT JOIN gd USING (mes) LEFT JOIN kd USING (mes)
+        ORDER BY mes""")
 
     rc = _tabla(con, "06_recencia_contacto", f"""
         SELECT CASE WHEN dias_desde_ultima_actividad <= 7 THEN '0-7'
                     WHEN dias_desde_ultima_actividad <= 14 THEN '8-14'
                     WHEN dias_desde_ultima_actividad <= 30 THEN '15-30'
                     WHEN dias_desde_ultima_actividad <= 60 THEN '31-60'
-                    ELSE '61-92' END tramo_dias,
+                    ELSE '61+' END tramo_dias,
                sum((NOT en_registros)::INT) sin_datos_contacto, sum(en_registros::INT) con_datos_contacto
         FROM {M} WHERE ultima_actividad_obs IS NOT NULL GROUP BY 1
         ORDER BY min(dias_desde_ultima_actividad)""")
     fig, ax = plt.subplots(figsize=(7.5, 3.4))
     x = np.arange(len(rc))
     b1 = ax.bar(x - w / 2 - 0.01, rc.sin_datos_contacto, w, color=S1, label="Base anterior a julio (sin teléfono en archivos)")
-    b2 = ax.bar(x + w / 2 + 0.01, rc.con_datos_contacto, w, color=S2, label="Registrados jul-sep (con teléfono)")
+    b2 = ax.bar(x + w / 2 + 0.01, rc.con_datos_contacto, w, color=S2, label="Registrados desde julio (con teléfono)")
     for bars in (b1, b2):
         ax.bar_label(bars, labels=[_miles(v) for v in bars.datavalues], padding=2, color=TXT, fontsize=9)
     ax.set_xticks(x, rc.tramo_dias)
@@ -178,7 +202,7 @@ def generar_reporte(con):
     hm = _tabla(con, "08_apuestas_dia_hora", """
         SELECT isodow(fecha_hora) dia_semana, hour(fecha_hora) hora,
                count(*) / count(DISTINCT fecha_hora::DATE) apuestas_promedio_dia
-        FROM v_apuesta GROUP BY 1, 2 ORDER BY 1, 2""")
+        FROM v_apuesta_dc GROUP BY 1, 2 ORDER BY 1, 2""")
     mat = hm.pivot(index="dia_semana", columns="hora", values="apuestas_promedio_dia").values
     fig, ax = plt.subplots(figsize=(9, 3.2))
     im = ax.imshow(mat, aspect="auto", cmap=LinearSegmentedColormap.from_list("seq", SEQ))

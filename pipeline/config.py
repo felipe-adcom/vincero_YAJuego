@@ -12,11 +12,8 @@ EXPORT_DIR = ROOT / "data" / "exports"     # salidas con datos personales (no ve
 REPORT_DIR = ROOT / "reports"              # salidas agregadas, sin datos personales
 SQL_DIR = ROOT / "sql"
 
-# Fecha de corte explícita: último instante cubierto por segmentos, audiencias y exportes.
-FECHA_CORTE = "2026-11-22 23:59:59"
-# Fin del periodo de análisis descriptivo: último mes completo. El análisis base (insights,
-# comparaciones mensuales, embudos) se calcula hasta aquí para no mezclar meses parciales.
-FIN_ANALISIS = "2026-09-30 23:59:59"
+# Fecha de corte: último instante que cubren el análisis, los segmentos, las audiencias y los exportes.
+FECHA_CORTE = None  # None: el corte es el último día con datos cargados
 # Inicio de la ventana observada de transacciones (primer día de las bases).
 INICIO_OBSERVACION = "2026-07-01 00:00:00"
 

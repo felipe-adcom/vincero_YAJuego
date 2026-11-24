@@ -4,7 +4,6 @@ data/warehouse/*
 data/exports/*
 !data/**/.gitkeep
 __pycache__/
-campanas/cifras_fijas.json
 # Contiene cifras del cliente: se versiona solo cuando el repositorio sea privado
 docs/01_diagnostico_datos.md
 reports/*
