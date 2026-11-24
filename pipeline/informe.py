@@ -460,8 +460,74 @@ def cargar_app(D):
             WHERE fecha_ultima_actualizacion <= getvariable('fin_analisis') GROUP BY 1
         ORDER BY 1, 2""").df()
     D["cobertura"] = con.execute("SELECT dia, fuente, estado FROM meta.cobertura_dia ORDER BY 1, 2").df()
+    D["fichas"] = cargar_fichas(con)
     con.close()
     return D
+
+
+ETIQUETAS_FICHA = ["h_sin_recarga_0_7d", "h_sin_recarga_8_30d", "h_sin_recarga_31d_mas", "h_una_sola_recarga",
+                   "h_recarga_sin_apuesta_deportiva", "h_atrasado_vs_ritmo_propio", "h_caida_de_frecuencia", "h_retorno",
+                   "h_continuo_3_ventanas", "h_deposito_posterior_al_corte"]
+
+
+def cargar_fichas(con):
+    """Una fila por jugador para el módulo CRM. Sin nombre, teléfono, correo ni documento: solo el ID y su
+    comportamiento. Se empaqueta por columnas y comprimido (gzip) dentro de la página."""
+    import gzip
+    meses = [r[0] for r in con.execute("""SELECT DISTINCT strftime(fecha_hora, '%Y-%m') m FROM core.recarga
+                                          WHERE fecha_hora <= (SELECT max(fecha_corte) FROM mart.jugador_resumen) ORDER BY 1""").fetchall()]
+    piv = lambda tabla, col: ", ".join(  # noqa: E731
+        f"count(*) FILTER (WHERE strftime({col}, '%Y-%m') = '{m}')::INT" for m in meses)
+    etq = " + ".join(f"(coalesce(s.{e}, false)::INT << {i})" for i, e in enumerate(ETIQUETAS_FICHA))
+    df = con.execute(f"""
+        WITH mr AS (SELECT player_id, [{piv('core.recarga', 'fecha_hora')}] m FROM core.recarga
+                    WHERE fecha_hora <= (SELECT max(fecha_corte) FROM mart.jugador_resumen) GROUP BY 1),
+             ma AS (SELECT player_id, [{piv('core.apuesta', 'fecha_hora')}] m FROM core.apuesta
+                    WHERE fecha_hora <= (SELECT max(fecha_corte) FROM mart.jugador_resumen) GROUP BY 1),
+             mk AS (SELECT player_id, [{piv('core.casino', 'fecha_hora')}] m FROM core.casino
+                    WHERE fecha_hora <= (SELECT max(fecha_corte) FROM mart.jugador_resumen) GROUP BY 1),
+             pr AS (PIVOT (SELECT player_id, modelo, round(probabilidad, 3) p FROM mart.prediccion_jugador) ON modelo USING first(p) GROUP BY player_id),
+             au AS (SELECT player_id, campana, grupo, variante_copy, resultado FROM mart.audiencia_sms_detalle
+                    QUALIFY row_number() OVER (PARTITION BY player_id ORDER BY (resultado = 'seleccionado') DESC, prioridad) = 1)
+        SELECT j.player_id id, s.ciclo_vida cv, s.nivel_valor nv, s.pref_modalidad pm, s.franja_habitual fr,
+               (s.estado_contacto = 'contactable_pendiente_consentimiento')::INT ct, s.estado_contacto ec,
+               s.senal_revision_juego_responsable::INT jr, j.en_registros::INT rg,
+               strftime(j.fecha_registro, '%Y-%m-%d') freg, j.edad_al_corte edad, j.genero gen, j.region regn,
+               (j.verificacion_celular_cod = 30)::INT ver,
+               j.rec_n, round(j.rec_monto) rec_m, j.apu_n, round(j.apu_monto) apu_m, j.cas_n, round(j.cas_monto) cas_m,
+               j.ret_n, round(j.ret_monto_neto) ret_m, j.dias_desde_ultima_actividad dsa,
+               strftime(j.rec_primera_obs, '%Y-%m-%d') p_rec, strftime(j.rec_ultima_obs, '%Y-%m-%d') u_rec,
+               strftime(j.apu_ultima_obs, '%Y-%m-%d') u_apu, strftime(j.cas_ultima_obs, '%Y-%m-%d') u_cas,
+               j.apu_intervalo_mediano_dias itv, round(j.apu_pct_en_vivo, 2) viv, j.apu_monto_mediano apu_med, j.rec_mediana rec_med,
+               j.rec_metodo_principal met, j.apu_canal_principal can, j.cas_proveedor_principal prov, j.cas_juego_principal juego,
+               {etq} etq,
+               mr.m m_rec, ma.m m_apu, mk.m m_cas,
+               pr.* EXCLUDE (player_id),
+               au.campana camp, au.grupo grp, au.variante_copy var, au.resultado res
+        FROM mart.jugador_resumen j JOIN mart.segmento_jugador s USING (player_id)
+        LEFT JOIN mr USING (player_id) LEFT JOIN ma USING (player_id) LEFT JOIN mk USING (player_id)
+        LEFT JOIN pr USING (player_id) LEFT JOIN au USING (player_id)
+        ORDER BY j.ultima_actividad_obs DESC NULLS LAST""").df()
+    cero = [0] * len(meses)
+    umb = {m: [q50, q80] for m, q50, q80 in con.execute("""SELECT modelo, quantile_cont(probabilidad, 0.5), quantile_cont(probabilidad, 0.8)
+                                                           FROM mart.prediccion_jugador GROUP BY 1""").fetchall()}
+    out = {"meses": meses, "n": len(df), "etiquetas": ETIQUETAS_FICHA, "umbrales": umb, "cols": {}, "cats": {}}
+    for c in df.columns:
+        x = df[c]
+        if c.startswith("m_"):
+            out["cols"][c] = [[int(z) for z in v] if isinstance(v, (list, np.ndarray)) else cero for v in x]
+        elif not pd.api.types.is_numeric_dtype(x):
+            if c in ("id", "freg", "p_rec", "u_rec", "u_apu", "u_cas"):
+                out["cols"][c] = [None if pd.isna(v) else str(v) for v in x]
+            else:  # categorías: diccionario + índice
+                cats = sorted({str(v) for v in x if not pd.isna(v)})
+                pos = {v: i for i, v in enumerate(cats)}
+                out["cats"][c] = cats
+                out["cols"][c] = [None if pd.isna(v) else pos[str(v)] for v in x]
+        else:
+            out["cols"][c] = [None if pd.isna(v) else (int(v) if float(v).is_integer() else round(float(v), 3)) for v in x]
+    raw = json.dumps(out, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    return base64.b64encode(gzip.compress(raw, 9)).decode()
 
 
 def b64(path):
@@ -507,7 +573,7 @@ button{font:inherit;color:inherit}
 
 /* Shell */
 .app{display:grid;grid-template-columns:236px minmax(0,1fr);min-height:100%}
-.side{background:var(--side);color:var(--side-fg);position:sticky;top:0;height:100vh;display:flex;flex-direction:column;gap:18px;
+.side{background:var(--side);color:var(--side-fg);position:sticky;top:0;height:100vh;overflow-y:auto;display:flex;flex-direction:column;gap:18px;
   padding:20px 14px max(16px,env(safe-area-inset-bottom,0px)) max(14px,env(safe-area-inset-left,0px))}
 .brand{display:flex;align-items:center;padding:4px 8px 6px}
 .brand img{height:16px;width:auto}
@@ -699,6 +765,20 @@ svg rect:hover,svg path:hover{opacity:.8}
 @media (max-width:860px){.info::after{left:auto;right:-8px;transform:none;max-width:240px}}
 .todo{display:grid;gap:2px;border-left:3px solid var(--accent);padding:4px 0 4px 10px;font-size:.86rem}
 .todo b{font-size:.7rem;text-transform:uppercase;letter-spacing:.08em;color:var(--accent)}
+.vstack{display:grid;gap:18px}
+.crm-row{cursor:pointer}
+.crm-row:focus{outline:2px solid var(--accent);outline-offset:-2px}
+.crm-bar{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.crm-bar select{font:inherit;font-size:.82rem;color:var(--fg);background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:6px 8px;max-width:100%}
+.dgrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px 16px;margin:0}
+.dgrid dt{font-size:.72rem;color:var(--fg2);text-transform:uppercase;letter-spacing:.05em}
+.dgrid dd{margin:2px 0 0;font-size:.88rem}
+.mgrid{display:grid;gap:6px}
+.mrow{display:grid;grid-template-columns:100px repeat(var(--m,5),minmax(0,1fr));gap:6px;align-items:end}
+.mhead{font-size:.72rem;color:var(--fg2);text-align:center}
+.mcell{height:46px;position:relative;background:var(--grid);border-radius:4px;display:flex;align-items:flex-end;overflow:hidden}
+.mcell i{display:block;width:100%;background:var(--accent);opacity:.85}
+.mcell span{position:absolute;inset:auto 0 2px;text-align:center;font:500 .68rem var(--f-mono);color:var(--fg)}
 details.how{border:1px solid var(--line);border-radius:8px;background:var(--panel);padding:10px 14px;font-size:.84rem}
 details.how summary{cursor:pointer;font-weight:500;color:var(--fg2)}
 details.how[open] summary{margin-bottom:6px}
@@ -921,6 +1001,8 @@ JS = r"""
   const crumb = document.getElementById('crumb-view');
   // Las vistas usan id "v-<nombre>" para que el navegador no salte al ancla al cambiar de módulo.
   function show(id){
+    let sub = null;
+    if(id.startsWith('jugador/')){ sub = decodeURIComponent(id.slice(8)); id = 'crm'; }
     if(!views.some(v => v.id === 'v-' + id)) id = 'inicio';
     views.forEach(v => v.hidden = v.id !== 'v-' + id);
     links.forEach(a => a.classList.toggle('on', a.getAttribute('href') === '#' + id));
@@ -929,9 +1011,10 @@ JS = r"""
     const v = document.getElementById('v-' + id);
     crumb.textContent = v.dataset.title;
     window.scrollTo(0, 0);
+    document.dispatchEvent(new CustomEvent('vista', {detail: {id, sub}}));
   }
   window.addEventListener('hashchange', () => show(location.hash.slice(1)));
-  show(location.hash.slice(1) || 'inicio');
+  window.__show = () => show(location.hash.slice(1) || 'inicio');
 
   // Gestor de campañas
   const items = [...document.querySelectorAll('.citem')];
@@ -1109,6 +1192,185 @@ def insight(titulo, metrica, metrica_lbl, obs, evid, interp, accion, chart="", t
     {f'<div class="fig">{chart}</div>' if chart else ''}
   </div>
 </section>"""
+
+
+JS_CRM = r"""
+(function(){
+  const N = JSON.parse(document.getElementById('app-data').textContent).crm;
+  const nf = (x, d = 0) => (x === null || x === undefined) ? '—' : Number(x).toLocaleString('es-CO', {maximumFractionDigits: d, minimumFractionDigits: d});
+  const cop = x => (x === null || x === undefined) ? '—' : '$' + nf(x);
+  const pct = x => (x === null || x === undefined) ? '—' : nf(100 * x, x < 0.1 ? 1 : 0) + ' %';
+  const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  const pl = (x, uno, varios) => `${nf(x)} ${Number(x) === 1 ? uno : varios}`;
+  const fecha = s => { if(!s) return '—'; const [y, m, d] = s.split('-'); return `${+d}-${N.mes[+m]}-${y.slice(2)}`; };
+  let F = null, filas = [], pagina = 0;
+  const POR_PAGINA = 50;
+  async function cargar(){
+    if(F) return F;
+    const b = Uint8Array.from(atob(document.getElementById('fichas').textContent.trim()), c => c.charCodeAt(0));
+    const txt = await new Response(new Blob([b]).stream().pipeThrough(new DecompressionStream('gzip'))).text();
+    F = JSON.parse(txt);
+    F.idx = new Map(F.cols.id.map((id, i) => [id, i]));
+    llenarFiltros();
+    return F;
+  }
+  const col = (c, i) => F.cols[c] ? F.cols[c][i] : null;
+  const cat = (c, i) => { const v = col(c, i); return v === null || v === undefined ? null : F.cats[c][v]; };
+  function banda(m, p){ if(p === null || p === undefined) return null; const u = F.umbrales[m]; return p >= u[1] ? 'alta' : (p >= u[0] ? 'media' : 'baja'); }
+  function llenarFiltros(){
+    const sel = (id, opciones) => { document.getElementById(id).innerHTML += opciones.map(([v, t]) => `<option value="${esc(v)}">${esc(t)}</option>`).join(''); };
+    sel('crm-cv', F.cats.cv.map(c => [c, N.cv[c] || c]));
+    sel('crm-camp', F.cats.camp.map(c => [c, `${c} · ${N.camp[c] || ''}`]));
+  }
+  function filtrar(){
+    const q = document.getElementById('crm-q').value.trim();
+    const cv = document.getElementById('crm-cv').value, ct = document.getElementById('crm-ct').value;
+    const camp = document.getElementById('crm-camp').value, sen = document.getElementById('crm-sen').value;
+    const orden = document.getElementById('crm-orden').value;
+    const cvi = cv ? F.cats.cv.indexOf(cv) : -1, campi = camp && camp !== '_' ? F.cats.camp.indexOf(camp) : -1;
+    const seli = F.cats.res.indexOf('seleccionado');
+    filas = [];
+    for(let i = 0; i < F.n; i++){
+      if(q && !F.cols.id[i].includes(q)) continue;
+      if(cvi >= 0 && F.cols.cv[i] !== cvi) continue;
+      if(ct === '1' && F.cols.ct[i] !== 1) continue;
+      if(ct === '0' && F.cols.ct[i] === 1) continue;
+      if(camp === '_' && F.cols.res[i] === seli) continue;
+      if(campi >= 0 && !(F.cols.camp[i] === campi && F.cols.res[i] === seli)) continue;
+      if(sen){ const [m, b] = sen.split(':'); if(banda(m, F.cols[m] ? F.cols[m][i] : null) !== b) continue; }
+      filas.push(i);
+    }
+    const key = {rec: 'rec_m', apu: 'apu_m', cas: 'cas_m', ab: 'abandono'}[orden];
+    if(key) filas.sort((a, b) => (F.cols[key][b] ?? -1) - (F.cols[key][a] ?? -1));
+    else if(orden === 'dsa') filas.sort((a, b) => (F.cols.dsa[a] ?? 9e9) - (F.cols.dsa[b] ?? 9e9));
+    pagina = 0;
+    pintarLista();
+  }
+  function senal(i){
+    const out = [];
+    const ab = banda('abandono', col('abandono', i)), ac = banda('activacion', col('activacion', i));
+    if(ab === 'alta') out.push('<span class="pill crit">Riesgo de abandono alto</span>');
+    if(ac === 'alta') out.push('<span class="pill ok">Prob. de activarse alta</span>');
+    for(const [m, t] of [['cruzada_deportes', 'Oport. deportes'], ['habito', 'Oport. hábito'], ['modalidad', 'Oport. modalidad']])
+      if(banda(m, col(m, i)) === 'alta') out.push(`<span class="pill neu">${t}</span>`);
+    return out.slice(0, 2).join(' ') || '<span class="muted small">—</span>';
+  }
+  function campTxt(i){
+    const r = cat('res', i);
+    if(r === 'seleccionado') return `<code>${esc(cat('camp', i))}</code> <span class="muted small">${cat('grp', i) === 'control' ? 'control' : 'envío'}</span>`;
+    return '<span class="muted small">—</span>';
+  }
+  function pintarLista(){
+    const tb = document.getElementById('crm-body');
+    const ini = pagina * POR_PAGINA, fin = Math.min(filas.length, ini + POR_PAGINA);
+    tb.innerHTML = filas.slice(ini, fin).map(i => `<tr class="crm-row" data-id="${esc(F.cols.id[i])}" tabindex="0">
+      <td><b class="mono">${esc(F.cols.id[i])}</b></td><td>${esc(N.cv[cat('cv', i)] || '—')}</td>
+      <td class="num">${col('dsa', i) === null ? '—' : nf(col('dsa', i)) + ' d'}</td>
+      <td class="num">${cop(col('rec_m', i))}</td><td class="num">${cop(col('apu_m', i))}</td><td class="num">${col('cas_m', i) ? cop(col('cas_m', i)) : '—'}</td>
+      <td>${senal(i)}</td><td>${campTxt(i)}</td></tr>`).join('')
+      || '<tr><td colspan="8" class="muted">Ningún jugador coincide con estos filtros.</td></tr>';
+    document.getElementById('crm-n').textContent = `${nf(filas.length)} jugadores`;
+    document.getElementById('crm-pag').textContent = filas.length ? `${nf(ini + 1)}-${nf(fin)} de ${nf(filas.length)}` : '';
+    document.getElementById('crm-prev').disabled = pagina === 0;
+    document.getElementById('crm-next').disabled = fin >= filas.length;
+  }
+  function barrasMes(i){
+    const fila = (c, t) => {
+      const v = F.cols[c][i], mx = Math.max(1, ...v);
+      return `<div class="mrow"><span class="small muted">${t}</span>${v.map((x, k) => `<div class="mcell" title="${F.meses[k]}: ${nf(x)}"><i style="height:${Math.round(100 * x / mx)}%"></i><span>${x ? nf(x) : ''}</span></div>`).join('')}</div>`;
+    };
+    return `<div class="mgrid"><div class="mrow"><span></span>${F.meses.map(m => `<div class="mhead">${N.mes[+m.slice(5)]}</div>`).join('')}</div>
+      ${fila('m_rec', 'Recargas')}${fila('m_apu', 'Apuestas')}${fila('m_cas', 'Rondas casino')}</div>`;
+  }
+  function accion(i){
+    if(col('jr', i) === 1) return ['crit', 'Fuera de mensajes promocionales', 'Tiene señales de juego responsable.'];
+    const r = cat('res', i), c = cat('camp', i);
+    if(r === 'seleccionado') return cat('grp', i) === 'control'
+      ? ['neu', `${c}: grupo de control`, 'No recibe SMS en esta ola; sirve para medir el efecto de la campaña.']
+      : ['ok', `${c}: ${N.camp[c] || ''}`, `Recibe el SMS de esta ola${cat('var', i) && cat('var', i) !== 'general' ? ' (variante ' + cat('var', i).replace('_', ' ') + ')' : ''}.`];
+    if(col('ct', i) !== 1) return ['warn', 'No contactable', N.ec[cat('ec', i)] || ''];
+    for(const [m, t, d] of [['cruzada_deportes', 'Candidato a deportes', 'Probabilidad alta de hacer su primera apuesta deportiva.'],
+                            ['habito', 'Candidato a volverse habitual', 'Enviarle la agenda de su modalidad.'],
+                            ['modalidad', 'Candidato a otra modalidad', 'Mostrarle la otra modalidad.']])
+      if(banda(m, col(m, i)) === 'alta') return ['ok', t, d];
+    if(r === 'suprimido_por_prioridad') return ['neu', 'En otra campaña de mayor prioridad', ''];
+    return ['neu', 'Sin acción esta semana', 'No cumple las reglas de ninguna campaña.'];
+  }
+  function ficha(id){
+    const i = F.idx.get(id);
+    const box = document.getElementById('crm-ficha');
+    if(i === undefined){ box.innerHTML = `<a class="btn" href="#crm">← Jugadores</a><p class="muted" style="margin-top:12px">No encontramos el jugador ${esc(id)}.</p>`; return; }
+    const [tono, ttl, det] = accion(i);
+    const etq = F.etiquetas.filter((e, k) => (col('etq', i) >> k) & 1).map(e => `<span class="pill neu">${esc(N.etq[e] || e)}</span>`).join(' ') || '<span class="muted small">Ninguna</span>';
+    const pred = [['abandono', 'Abandono en 30 días'], ['activacion', 'Primera recarga en 14 días'], ['habito', 'Volverse habitual'],
+                  ['cruzada_deportes', 'Primera apuesta deportiva'], ['modalidad', 'Probar otra modalidad']]
+      .filter(([m]) => col(m, i) !== null && col(m, i) !== undefined)
+      .map(([m, t]) => { const b = banda(m, col(m, i)); const malo = m === 'abandono' ? b === 'alta' : false;
+        return `<div class="li"><span class="ic ${malo ? 'crit' : b === 'alta' ? 'ok' : 'acc'}">${b === 'alta' ? '↑' : b === 'media' ? '·' : '↓'}</span><div><b>${t}</b><span>${pct(col(m, i))} · probabilidad ${b}</span></div><span></span></div>`; }).join('')
+      || '<p class="small muted">No entra en la población de ningún modelo.</p>';
+    const dato = (k, v) => `<div><dt>${k}</dt><dd>${v}</dd></div>`;
+    const itv = col('itv', i);
+    box.innerHTML = `
+      <div class="vhead"><div><a class="small" href="#crm">← Jugadores</a><h1 class="mono" style="margin-top:4px">Jugador ${esc(id)}</h1>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px"><span class="chip acc">${esc(N.cv[cat('cv', i)] || '')}</span>
+        <span class="chip">Valor: ${esc(N.nv[cat('nv', i)] || '—')}</span>
+        <span class="chip ${col('ct', i) === 1 ? 'ok' : 'warn'}">${col('ct', i) === 1 ? 'Contactable' : 'No contactable'}</span>
+        <span class="chip">${col('rg', i) === 1 ? 'Registrado ' + fecha(col('freg', i)) : 'Base anterior a julio'}</span></div></div></div>
+      <div class="note" style="border-left-color:var(--${tono === 'crit' ? 'crit' : tono === 'warn' ? 'warn' : 'accent'})"><b>Siguiente acción</b><span><strong>${esc(ttl)}</strong>${det ? ' · ' + esc(det) : ''}</span></div>
+      <div class="g g4">
+        <div class="tile"><div class="lab">Recargado</div><div class="val">${cop(col('rec_m', i))}</div><div class="ft">${pl(col('rec_n', i), 'recarga', 'recargas')}${col('rec_n', i) ? ' · típica ' + cop(col('rec_med', i)) : ''}</div></div>
+        <div class="tile"><div class="lab">Apostado en deportes</div><div class="val">${cop(col('apu_m', i))}</div><div class="ft">${pl(col('apu_n', i), 'apuesta', 'apuestas')}${col('apu_n', i) ? ' · típica ' + cop(col('apu_med', i)) : ''}</div></div>
+        <div class="tile"><div class="lab">Apostado en casino</div><div class="val">${cop(col('cas_m', i))}</div><div class="ft">${pl(col('cas_n', i), 'ronda', 'rondas')} · desde el ${N.cas_desde}</div></div>
+        <div class="tile"><div class="lab">Retirado</div><div class="val">${cop(col('ret_m', i))}</div><div class="ft">${pl(col('ret_n', i), 'retiro', 'retiros')}</div></div>
+      </div>
+      <div class="g g-73">
+        <section class="panel"><div class="ph"><h2>Actividad por mes</h2></div><div class="pb">${barrasMes(i)}</div></section>
+        <section class="panel"><div class="ph"><h2>Predicción</h2></div><div class="pb flush"><div class="list">${pred}</div></div></section>
+      </div>
+      <div class="g g2">
+        <section class="panel"><div class="ph"><h2>Cómo juega</h2></div><div class="pb"><dl class="dgrid">
+          ${dato('Días sin jugar', col('dsa', i) === null ? '—' : nf(col('dsa', i)))}
+          ${dato('Ritmo', itv ? 'apuesta cada ' + nf(itv, itv < 10 ? 1 : 0) + ' días' : '—')}
+          ${dato('Modalidad', esc(N.pm[cat('pm', i)] || '—') + (col('viv', i) !== null ? ` · ${nf(100 * col('viv', i))} % en vivo` : ''))}
+          ${dato('Horario habitual', esc(N.fr[cat('fr', i)] || '—'))}
+          ${dato('Medio de recarga', esc(cat('met', i) || '—'))}
+          ${dato('Canal', esc(cat('can', i) || '—'))}
+          ${dato('Casino', cat('prov', i) ? esc(cat('prov', i).replace('_', ' ')) + ' · ' + esc(cat('juego', i) || '') : '—')}
+        </dl></div></section>
+        <section class="panel"><div class="ph"><h2>Datos y fechas</h2></div><div class="pb"><dl class="dgrid">
+          ${dato('Primera recarga', fecha(col('p_rec', i)))}
+          ${dato('Última recarga', fecha(col('u_rec', i)))}
+          ${dato('Última apuesta', fecha(col('u_apu', i)))}
+          ${dato('Última ronda casino', fecha(col('u_cas', i)))}
+          ${dato('Edad · género', (col('edad', i) ?? '—') + ' · ' + (cat('gen', i) || '—'))}
+          ${dato('Región', esc((cat('regn', i) || '—').replace(/^Region /, '')))}
+          ${dato('Celular verificado', col('ver', i) === 1 ? 'Sí' : 'No')}
+        </dl><div><h4 class="small muted" style="margin:8px 0 6px">Etiquetas</h4>${etq}</div></div></section>
+      </div>`;
+  }
+  function vista(sub){
+    document.getElementById('crm-lista').hidden = !!sub;
+    document.getElementById('crm-ficha').hidden = !sub;
+    if(sub){ ficha(sub); document.getElementById('crumb-view').textContent = 'Jugadores · ' + sub; }
+  }
+  document.addEventListener('vista', async e => {
+    if(e.detail.id !== 'crm') return;
+    const primera = !F;
+    if(primera) document.getElementById('crm-body').innerHTML = '<tr><td colspan="8" class="muted">Cargando jugadores…</td></tr>';
+    await cargar();
+    if(primera) filtrar();
+    vista(e.detail.sub);
+  });
+  ['crm-cv', 'crm-ct', 'crm-camp', 'crm-sen', 'crm-orden'].forEach(id => document.getElementById(id).addEventListener('change', () => F && filtrar()));
+  let t;
+  document.getElementById('crm-q').addEventListener('input', () => { clearTimeout(t); t = setTimeout(() => F && filtrar(), 200); });
+  document.getElementById('crm-prev').addEventListener('click', () => { pagina--; pintarLista(); });
+  document.getElementById('crm-next').addEventListener('click', () => { pagina++; pintarLista(); });
+  document.getElementById('crm-body').addEventListener('click', e => { const r = e.target.closest('.crm-row'); if(r) location.hash = 'jugador/' + encodeURIComponent(r.dataset.id); });
+  document.getElementById('crm-body').addEventListener('keydown', e => { const r = e.target.closest('.crm-row'); if(r && e.key === 'Enter') location.hash = 'jugador/' + encodeURIComponent(r.dataset.id); });
+  window.__show();
+})();
+"""
 
 
 def info(tip):
@@ -1512,6 +1774,13 @@ def construir_html(D):
         "dicc": [] if "diccionario" in MODULOS_OCULTOS else D["dicc"][["tabla", "campo", "tipo", "definicion", "origen", "formula"]].to_dict(orient="records"),
         "ctrl": [] if "datos" in MODULOS_OCULTOS else D["ctrl"].fillna("").astype(str).to_dict(orient="records"),
         "camps": camps_js,
+        "crm": {"cv": NOMBRES_CV, "nv": NOMBRES_NV, "pm": NOMBRES_PM,
+                "fr": {"manana": "Mañana", "tarde": "Tarde", "noche": "Noche", "madrugada": "Madrugada"},
+                "ec": {"sin_datos_de_contacto": "Base anterior a julio: no tenemos su teléfono.", "telefono_invalido": "El teléfono registrado no es válido.",
+                       "telefono_compartido": "Su teléfono lo comparten varios jugadores.", "cuenta_no_activa": "La cuenta no está activa.",
+                       "contactable_pendiente_consentimiento": ""},
+                "camp": {c["c"]: c["t"] for c in camps_js}, "etq": {k: t for k, t, *_ in hip_def},
+                "mes": ["", "ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"], "cas_desde": fd(cas_d0)},
     }, ensure_ascii=False).replace("</", "<\\/")
 
     pend = int(cam.seleccionados.sum())
@@ -1753,7 +2022,7 @@ def construir_html(D):
 """
     nav = [("Operación", [("inicio", "home", "Inicio", ""), ("datos", "db", "Fuentes de datos", str(int((D['manifiesto'].estado == 'cargado').sum()))),
                           ("modelo", "model", "Modelo", ""), ("diccionario", "book", "Diccionario", str(len(D['dicc'])))]),
-           ("Clientes", [("jugadores", "users", "Jugadores", n(D['universo_base'])), ("insights", "spark", "Insights", "7"), ("segmentos", "users", "Segmentos", "7"), ("audiencias", "filter", "Constructor", "")]),
+           ("Clientes", [("crm", "users", "Jugadores", n(D['universo'])), ("jugadores", "users", "Composición", ""), ("insights", "spark", "Insights", "7"), ("segmentos", "users", "Segmentos", "7"), ("audiencias", "filter", "Constructor", "")]),
            ("Predicción", [("prediccion", "gauge", "Abandono y activación", "2"), ("crecimiento", "spark", "Crecimiento", "3")]),
            ("Seguimiento", [("octubre", "spark", "Tendencias y casino", "")]),
            ("Activación", [("campanas", "send", "Campañas SMS", "6"), ("medicion", "gauge", "Medición", ""), ("plan", "map", "Plan", "")]),
@@ -1886,8 +2155,8 @@ def construir_html(D):
     <div class="pb flush"><div class="tw" style="max-height:640px"><table class="wide"><thead><tr><th>Tabla</th><th>Campo</th><th>Tipo</th><th>Definición</th><th>Origen</th><th>Fórmula / regla</th></tr></thead><tbody id="dicc-body"></tbody></table></div></div></section>
 </section>
 
-<section class="view" id="v-jugadores" data-title="Jugadores">
-  <div class="vhead"><div><h1>Jugadores</h1><p>Quién juega y qué hace, desde el 1-jul.</p></div></div>
+<section class="view" id="v-jugadores" data-title="Composición">
+  <div class="vhead"><div><h1>Composición</h1><p>Cómo se reparte la base según lo que hace cada jugador.</p></div></div>
   <div class="g g4">
     {tile('Jugadores', n(tot_j), 'Con actividad o registro desde el 1-jul', tip="Cada uno tiene un perfil con más de 100 indicadores, disponible en la exportación de la base.")}
     {tile('Recargan y apuestan', n(activos_rec_apu), f'{n(100 * activos_rec_apu / tot_j, 0)} % · casi todo el monto · <a href="#prediccion">Ver riesgo</a>', acc=True)}
@@ -1962,6 +2231,29 @@ def construir_html(D):
 </section>
 
 {pred_html}
+
+<section class="view" id="v-crm" data-title="Jugadores">
+  <div id="crm-lista" class="vstack">
+    <div class="vhead"><div><h1>Jugadores</h1><p>Busca un jugador o filtra la base para ver su ficha.</p></div>
+      <label class="search"><span class="muted small">ID</span><input id="crm-q" type="search" inputmode="numeric" placeholder="Buscar por ID de jugador"></label></div>
+    <section class="panel"><div class="ph"><div class="crm-bar">
+        <select id="crm-cv" aria-label="Segmento"><option value="">Todos los segmentos</option></select>
+        <select id="crm-ct" aria-label="Contacto"><option value="">Contactables y no</option><option value="1">Solo contactables</option><option value="0">No contactables</option></select>
+        <select id="crm-sen" aria-label="Predicción"><option value="">Cualquier predicción</option><option value="abandono:alta">Riesgo de abandono alto</option>
+          <option value="activacion:alta">Prob. de activarse alta</option><option value="habito:alta">Oportunidad: hábito</option>
+          <option value="cruzada_deportes:alta">Oportunidad: deportes</option><option value="modalidad:alta">Oportunidad: otra modalidad</option></select>
+        <select id="crm-camp" aria-label="Campaña"><option value="">Con o sin campaña</option><option value="_">Sin campaña</option></select>
+        <select id="crm-orden" aria-label="Ordenar"><option value="dsa">Actividad más reciente</option><option value="rec">Mayor recargado</option>
+          <option value="apu">Mayor apostado en deportes</option><option value="cas">Mayor apostado en casino</option><option value="ab">Mayor riesgo de abandono</option></select>
+      </div><span class="sub" id="crm-n"></span></div>
+      <div class="pb flush"><div class="tw"><table class="wide"><thead><tr><th>ID</th><th>Segmento</th><th class="num">Sin jugar</th><th class="num">Recargado</th>
+        <th class="num">Deportes</th><th class="num">Casino</th><th>Predicción</th><th>Campaña</th></tr></thead><tbody id="crm-body"></tbody></table></div></div>
+      <div class="ph" style="border-top:1px solid var(--line);border-bottom:0"><span class="sub" id="crm-pag"></span>
+        <div style="display:flex;gap:8px"><button type="button" class="btn" id="crm-prev">← Anterior</button><button type="button" class="btn" id="crm-next">Siguiente →</button></div></div>
+    </section>
+  </div>
+  <div id="crm-ficha" class="vstack" hidden></div>
+</section>
 
 <section class="view" id="v-audiencias" data-title="Constructor de audiencias">
   <div class="vhead"><div><h1>Constructor de audiencias</h1><p>Arma una audiencia y mira cuántos jugadores alcanza antes de lanzar.</p></div>
@@ -2052,7 +2344,9 @@ def construir_html(D):
 </div>
 </div>
 <script type="application/json" id="app-data">{data_json}</script>
+<script type="application/octet-stream" id="fichas">{D["fichas"]}</script>
 <script>{JS}</script>
+<script>{JS_CRM}</script>
 """
     return body
 

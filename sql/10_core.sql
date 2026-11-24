@@ -8,6 +8,13 @@
 -- =====================================================================
 CREATE SCHEMA IF NOT EXISTS core;
 
+-- Algunos exportes diarios traen las tildes mal codificadas ("RegiÃ³n" en lugar de "Región"):
+-- texto UTF-8 leído como Latin-1. Se reparan las secuencias del español.
+CREATE OR REPLACE MACRO reparar_tildes(x) AS
+  replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(x,
+    'Ã¡', 'á'), 'Ã©', 'é'), 'Ã' || chr(173), 'í'), 'Ã³', 'ó'), 'Ãº', 'ú'), 'Ã±', 'ñ'),
+    'Ã' || chr(129), 'Á'), 'Ã‰', 'É'), 'Ã' || chr(141), 'Í'), 'Ã“', 'Ó'), 'Ãš', 'Ú'), 'Ã‘', 'Ñ');
+
 -- Fuentes que pueden no haber llegado aún: la tabla de staging existe vacía.
 CREATE TABLE IF NOT EXISTS stg.casino (_load_id INTEGER, _archivo VARCHAR, _sha256 VARCHAR, _fila INTEGER,
     bet_id VARCHAR, client_id VARCHAR, provider VARCHAR, game VARCHAR, stake VARCHAR, win VARCHAR, status VARCHAR,
@@ -53,9 +60,9 @@ SELECT
     TRY_CAST(dob AS DATE)                           AS fecha_nacimiento,
     gender                                          AS genero,
     nationality                                     AS nacionalidad,
-    res_region                                      AS region,
-    res_department                                  AS departamento,
-    res_city                                        AS ciudad,
+    strip_accents(reparar_tildes(res_region))       AS region,          -- unifica "Región"/"Region"
+    reparar_tildes(res_department)                  AS departamento,
+    reparar_tildes(res_city)                        AS ciudad,
     TRY_CAST(document_type AS INTEGER)              AS tipo_documento_cod,
     md5(lower(trim(document_id)))                   AS documento_hash,   -- solo para detectar duplicados
     lower(trim(email))                              AS email,
