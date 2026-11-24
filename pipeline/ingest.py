@@ -71,6 +71,27 @@ def leer_excel(path: Path):
         yield nombre, header, datos
 
 
+def reparar_desplazadas(header, datos):
+    """Repara filas de Registros cuya dirección traía comas: el export la partió en varias celdas y corrió
+    hacia la derecha las columnas siguientes (código postal, teléfono, fecha de registro...).
+    Se detecta porque 'Insert Date' no trae fecha y una de las 3 celdas siguientes sí. La dirección se
+    vuelve a unir y el resto de la fila regresa a su columna. Devuelve (datos, filas reparadas)."""
+    if "Res Address" not in header or "Insert Date" not in header:
+        return datos, 0
+    ia, idt = header.index("Res Address"), header.index("Insert Date")
+    salida, reparadas = [], 0
+    for r in datos:
+        r = list(r)
+        if not isinstance(r[idt], dt.datetime):
+            k = next((j - idt for j in range(idt + 1, min(idt + 4, len(r))) if isinstance(r[j], dt.datetime)), 0)
+            if k:
+                partes = [str(v).strip() for v in r[ia:ia + k + 1] if v not in (None, "")]
+                r = r[:ia] + [", ".join(partes)] + r[ia + k + 1:] + [""] * k
+                reparadas += 1
+        salida.append(r)
+    return salida, reparadas
+
+
 def init_meta(con):
     con.execute("CREATE SCHEMA IF NOT EXISTS meta")
     con.execute("CREATE SCHEMA IF NOT EXISTS stg")
@@ -101,6 +122,7 @@ def cargar_hoja(con, load_id, path, h, hoja, header, datos, ahora):
                   nota="Columnas no coinciden con ninguna fuente conocida: revisar y ampliar FIRMAS.")
         return f"[revisar] {path.name}/{hoja}: fuente no reconocida"
 
+    datos, reparadas = reparar_desplazadas(header, datos)
     cols = [snake(c) for c in header]
     idx_p = header.index(COLUMNA_PERIODO[fuente])
     fechas = [r[idx_p] for r in datos if isinstance(r[idx_p], dt.datetime)]
@@ -146,8 +168,11 @@ def cargar_hoja(con, load_id, path, h, hoja, header, datos, ahora):
 
     registrar(con, load_id=load_id, archivo=path.name, hoja=hoja, sha256=h, fuente=fuente, filas=len(datos),
               columnas=len(header), periodo_min=pmin, periodo_max=pmax, mes_periodo=mes,
-              filas_por_mes=str(dict(sorted(meses.items()))), cargado_en=ahora, estado="cargado")
+              filas_por_mes=str(dict(sorted(meses.items()))), cargado_en=ahora, estado="cargado",
+              nota=(f"{reparadas} filas con la dirección partida en varias celdas; se reunió y se corrigió el corrimiento de columnas."
+                    if reparadas else None))
     return (f"[cargado] {path.name}/{hoja} -> {tabla}: {len(datos)} filas, periodo {pmin} a {pmax}"
+            + (f" ({reparadas} filas desplazadas reparadas)" if reparadas else "")
             + (f" (reemplaza cargas {reemplazados})" if reemplazados else ""))
 
 

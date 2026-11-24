@@ -12,7 +12,7 @@ import duckdb
 import openpyxl
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "pipeline"))
-from ingest import ingest  # noqa: E402
+from ingest import ingest, reparar_desplazadas  # noqa: E402
 
 HEADER = ["Id", "Client ID", "Surname", "Agent ID", "Network ID", "Test", "Method", "Status",
           "Amount", "Charge", "Insert Date", "Manual", "Promocode"]
@@ -67,6 +67,17 @@ def test_ciclo_completo():
         shutil.rmtree(tmp)
 
 
+def test_reparar_direccion_partida():
+    h = ["ID", "Res Address", "Res Postcode", "Mobilephone", "Insert Date", "Insert User"]
+    f = dt.datetime(2026, 10, 27, 9, 0)
+    buena = [1, "Calle 1", "050001", "3001234567", f, 99]
+    corrida = [2, "CR 60", " BARRIO X", "050001", "3007654321", f]  # la columna final se perdió por el corrimiento
+    datos, n = reparar_desplazadas(h, [buena, corrida])
+    assert n == 1 and datos[0] == buena
+    assert datos[1][1] == "CR 60, BARRIO X" and datos[1][3] == "3007654321" and datos[1][4] == f
+
+
 if __name__ == "__main__":
+    test_reparar_direccion_partida()
     test_ciclo_completo()
     print("OK")

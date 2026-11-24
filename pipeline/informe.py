@@ -801,7 +801,7 @@ VISTAS_ACTIVACION = r"""<section class="view" id="v-campanas" data-title="Campa�
   <section class="panel ask"><div class="ph"><h2>Lo que necesitamos de YAjuego esta semana</h2><span class="sub">Bloquea el primer envío</span></div><div class="pb flush"><div class="list">
     <div class="li"><span class="ic crit">1</span><div><b>Lista de consentimiento, autoexclusión y bloqueos</b><span>Cumplimiento · sin ella ninguna audiencia se activa</span></div><span class="pill crit">Bloqueante</span></div>
     <div class="li"><span class="ic crit">2</span><div><b>Aprobación de copies, leyenda +18 y texto de baja</b><span>Legal y CRM</span></div><span class="pill crit">Bloqueante</span></div>
-    <div class="li"><span class="ic warn">3</span><div><b>Días faltantes con el export de solicitudes</b><span>Tecnología · casino 1-27 oct, 26 y 27-oct, 9-nov y deportes del 11 y 13-nov</span></div><span class="pill warn">Mejora segmentos</span></div>
+    <div class="li"><span class="ic warn">3</span><div><b>Días faltantes con el export de solicitudes</b><span>Tecnología · casino 1-27 oct, 9-nov y deportes del 11 y 13-nov</span></div><span class="pill warn">Mejora segmentos</span></div>
     <div class="li"><span class="ic warn">4</span><div><b>Enlaces de destino, acortador con UTM y tarifa por SMS</b><span>CRM y proveedor SMS</span></div><span class="pill warn">Necesario para medir</span></div>
     <div class="li"><span class="ic acc">5</span><div><b>Significado de códigos de estado de cuenta y Live = 2</b><span>Tecnología</span></div><span class="pill neu">Validación</span></div>
   </div></div></section>
@@ -1496,7 +1496,7 @@ def construir_html(D):
       {tile('Recargas', mm(tot('recargas')), f"{n(tot('recargas', 'n'))} recargas en días completos")}
       {tile('Hipótesis de casino', f"{n(pct_sr_cas, 0)}<small> %</small>", 'de los "solo recarga" activos jugó casino')}
     </div>
-    <p class="small muted">Del 1 al 25-oct llegaron registros, recargas, apuestas deportivas y retiros completos; casino llega desde el {fd(cas_d0)}. {('Sin ningún archivo: ' + sin_txt + '. ') if sin_txt else ''}{n_rec} combinaciones de día y fuente vienen parciales y {n_falta} faltan.</p>
+    <p class="small muted">Registros, recargas, apuestas deportivas y retiros están completos desde el 1-oct; casino llega desde el {fd(cas_d0)}. {('Sin ningún archivo: ' + sin_txt + '. ') if sin_txt else ''}{n_rec} combinaciones de día y fuente vienen parciales y {n_falta} faltan.</p>
   </div></section>
   <div class="g g4">
     {tile('Jugadores con perfil', n(D['universo']), f"Al {corte:%d-%m-%Y} · incluye casino")}
@@ -1692,7 +1692,7 @@ def construir_html(D):
 <section class="view" id="v-octubre" data-title="Seguimiento y casino">
   <div class="vhead"><div><h1>Seguimiento y casino</h1><p>Datos de octubre y noviembre: {dias_txt_corto}. Alimentan segmentos y audiencias al corte del {corte:%d-%m-%Y}; aquí se comparan con la foto base de jul-sep.</p></div></div>
   <section class="panel"><div class="ph"><h2>Cobertura desde el {fd(rango[0])}</h2><span class="sub"><span class="pill ok">filas · completo</span> <span class="pill crit">parcial</span> <span class="pill neu">sin archivo</span></span></div><div class="pb flush"><div class="tw"><table class="wide"><thead><tr><th>Días</th><th>Registros</th><th>Recargas</th><th>Apuestas deportivas</th><th>Casino</th><th>Retiros</th></tr></thead><tbody>{post_rows}</tbody></table></div></div>
-    <div class="pb small muted">Los días seguidos con la misma cobertura se agrupan. Octubre del 1 al 25 llegó en archivos por rango; desde el 28-oct, en archivos diarios. Un archivo parcial viene de una vista de lista (PayIns, PayOuts, Clients_List, Bet) que exporta un máximo de filas: solo trae las últimas horas del día. Dos archivos recibidos no se cargaron: el de deportes del 11-nov traía rondas de casino ya incluidas en el archivo de casino, y el de deportes del 13-nov traía datos del 17-nov de 00:00 a 08:50.</div></section>
+    <div class="pb small muted">Los días seguidos con la misma cobertura se agrupan. Octubre del 1 al 25 llegó en archivos por rango; desde el 26-oct, en archivos diarios (casino desde el {fd(cas_d0)}). Un archivo parcial viene de una vista de lista (PayIns, PayOuts, Clients_List, Bet) que exporta un máximo de filas: solo trae las últimas horas del día. Dos archivos recibidos no se cargaron: el de deportes del 11-nov traía rondas de casino ya incluidas en el archivo de casino, y el de deportes del 13-nov traía datos del 17-nov de 00:00 a 08:50.</div></section>
   <div class="g g4">
     {tile('Rondas de casino', n(cas.rondas), f"{n(cas.jug)} jugadores · {n(cas.juegos)} juegos")}
     {tile('Apostado en casino', mm(cas.ap), f"Deportes en los mismos días: {mm(dep_mismos)}", acc=True)}
@@ -1737,7 +1737,7 @@ def construir_html(D):
     <tr><td>Enlaces de destino</td><td><span class="pill crit">Pendiente</span></td><td>URL de ejemplo; los sitios de YAjuego no fueron accesibles desde nuestro entorno</td><td>CRM define URL y acortador</td></tr>
     <tr><td>Tarifa SMS</td><td><span class="pill crit">Pendiente</span></td><td>Todos los copies caben en 1 segmento GSM-7</td><td>Tarifa del proveedor</td></tr>
     <tr><td>Casino</td><td><span class="pill warn">Parcial</span></td><td>Desde el {fd(cas_d0)}; entra a segmentos y audiencias al corte actual</td><td>Export de casino del mes completo</td></tr>
-    <tr><td>Octubre</td><td><span class="pill warn">Parcial</span></td><td>1 al 25-oct completo sin casino; {('sin datos el ' + sin_txt + '; ') if sin_txt else ''}{n_rec} combinaciones parciales</td><td>Export de casino del 1 al 27-oct y de los días faltantes</td></tr>
+    <tr><td>Octubre</td><td><span class="pill warn">Parcial</span></td><td>Completo sin casino del 1 al 27-oct; {('sin datos el ' + sin_txt + '; ') if sin_txt else ''}{n_rec} combinaciones parciales</td><td>Export de casino del 1 al 27-oct{' y de los días faltantes' if sin_txt else ''}</td></tr>
     <tr><td>Bonos y promociones</td><td><span class="pill ok">Decisión</span></td><td>Ninguna campaña ofrece incentivos</td><td>Si se suman, confirmarlos y medirlos como variante</td></tr>
   </tbody></table></div></div></section>
   <section class="panel"><div class="ph"><h2>Riesgos y contraargumentos</h2></div><div class="pb flush"><div class="list">
