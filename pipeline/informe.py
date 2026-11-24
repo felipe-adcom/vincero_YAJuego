@@ -597,6 +597,8 @@ table.wide{min-width:960px}
 .search input{border:0;outline:0;background:transparent;font:inherit;color:var(--fg);width:220px;max-width:100%}
 .seg{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;flex-wrap:wrap}
 .seg button{border:0;background:var(--panel);padding:6px 12px;font-size:.8rem;cursor:pointer;color:var(--fg2)}
+.seg a.btn{text-decoration:none;border:0;border-radius:0;color:var(--fg2)}
+.seg a.btn + a.btn{border-left:1px solid var(--line)}
 .seg button + button{border-left:1px solid var(--line)}
 .seg button[aria-pressed="true"]{background:var(--fg);color:var(--panel)}
 .checks{display:grid;gap:6px}
@@ -1732,14 +1734,16 @@ def construir_html(D):
     {t_af}
     <div class="note"><b>Qué hacer</b><span>Mientras llega el modelo, probar casino con un piloto pequeño en los perfiles con más afinidad, con grupo de control.</span></div>
   </div></section>"""
-    pred_html = f"""<section class="view" id="v-prediccion" data-title="Riesgo">
-  <div class="vhead"><div><h1>Riesgo</h1><p>Quién se va a ir y quién está por hacer su primera recarga.</p></div></div>
+    pred_html = f"""<section class="view" id="v-prediccion" data-title="Predicción · Abandono y activación">
+  <div class="vhead"><div><h1>Abandono y activación</h1><p>Quién se va a ir y quién está por hacer su primera recarga.</p></div>
+    <div class="seg"><a class="btn" href="#prediccion" aria-current="page" style="background:var(--fg);color:var(--panel)">Abandono y activación · 2</a><a class="btn" href="#crecimiento">Crecimiento · 3</a></div></div>
   {bloques['abandono']}{bloques['activacion']}
   <details class="how"><summary>¿Cómo funcionan los modelos?</summary>Regresión logística reentrenada con cada carga. Aprende de lo que hicieron jugadores parecidos en semanas anteriores y se prueba en la semana más reciente, que no vio. Solo usa datos conocidos en cada fecha; casino entra cuando tenga más historia (existe desde el {fd(cas_d0)}). Predice quién; el efecto del SMS lo mide el grupo de control.</details>
 </section>
 
-<section class="view" id="v-crecimiento" data-title="Crecimiento">
-  <div class="vhead"><div><h1>Crecimiento</h1><p>Quién está listo para jugar más seguido o probar otro producto.</p></div></div>
+<section class="view" id="v-crecimiento" data-title="Predicción · Crecimiento">
+  <div class="vhead"><div><h1>Crecimiento</h1><p>Quién está listo para jugar más seguido o probar otro producto.</p></div>
+    <div class="seg"><a class="btn" href="#prediccion">Abandono y activación · 2</a><a class="btn" href="#crecimiento" aria-current="page" style="background:var(--fg);color:var(--panel)">Crecimiento · 3</a></div></div>
   <div class="g g2">
     <div class="note"><b>Dónde está el crecimiento</b><span>De {n(op_alta)} jugadores con probabilidad alta en los tres modelos, solo {n(op_cont)} tienen teléfono. El resto es base anterior a julio: <a href="#ajustes">pedir sus datos</a> multiplica este módulo.</span></div>
     <div class="note"><b>Crecimiento responsable</b><span>Más frecuencia, no montos más altos. Fuera quien tiene señales de juego responsable y el 1 % de mayor intensidad; sin bonos y máximo un SMS por semana.</span></div>
@@ -1749,7 +1753,8 @@ def construir_html(D):
 """
     nav = [("Operación", [("inicio", "home", "Inicio", ""), ("datos", "db", "Fuentes de datos", str(int((D['manifiesto'].estado == 'cargado').sum()))),
                           ("modelo", "model", "Modelo", ""), ("diccionario", "book", "Diccionario", str(len(D['dicc'])))]),
-           ("Clientes", [("jugadores", "users", "Jugadores", n(D['universo_base'])), ("insights", "spark", "Insights", "7"), ("segmentos", "users", "Segmentos", "7"), ("prediccion", "gauge", "Riesgo", "2"), ("crecimiento", "spark", "Crecimiento", "3"), ("audiencias", "filter", "Constructor", "")]),
+           ("Clientes", [("jugadores", "users", "Jugadores", n(D['universo_base'])), ("insights", "spark", "Insights", "7"), ("segmentos", "users", "Segmentos", "7"), ("audiencias", "filter", "Constructor", "")]),
+           ("Predicción", [("prediccion", "gauge", "Abandono y activación", "2"), ("crecimiento", "spark", "Crecimiento", "3")]),
            ("Seguimiento", [("octubre", "spark", "Tendencias y casino", "")]),
            ("Activación", [("campanas", "send", "Campañas SMS", "6"), ("medicion", "gauge", "Medición", ""), ("plan", "map", "Plan", "")]),
            ("Cuenta", [("ajustes", "cog", "Pendientes", str(n_pend))])]
@@ -1969,8 +1974,8 @@ def construir_html(D):
         <div class="fgroup"><h4>Preferencia deportiva</h4><div class="checks">{ck_pm}</div></div>
       </div>
       <div class="g g2" style="gap:20px">
-        <div class="fgroup"><h4>Riesgo</h4><div class="checks">{ck_pr}</div></div>
-        <div class="fgroup"><h4>Crecimiento</h4><div class="checks">{ck_op}</div></div>
+        <div class="fgroup"><h4>Predicción: abandono y activación</h4><div class="checks">{ck_pr}</div></div>
+        <div class="fgroup"><h4>Predicción: crecimiento</h4><div class="checks">{ck_op}</div></div>
       </div>
       <div class="fgroup"><h4>Exclusiones</h4><div class="checks">
         <label><input type="checkbox" id="f-cont" checked> Solo contactables con los datos disponibles</label>
