@@ -779,6 +779,8 @@ svg rect:hover,svg path:hover{opacity:.8}
 .mcell{height:46px;position:relative;background:var(--grid);border-radius:4px;display:flex;align-items:flex-end;overflow:hidden}
 .mcell i{display:block;width:100%;background:var(--accent);opacity:.85}
 .mcell span{position:absolute;inset:auto 0 2px;text-align:center;font:500 .68rem var(--f-mono);color:var(--fg)}
+a.camp{color:var(--accent);text-decoration:none;font-weight:500;border-bottom:1px dotted currentColor;white-space:nowrap}
+a.camp:hover{border-bottom-style:solid}
 details.how{border:1px solid var(--line);border-radius:8px;background:var(--panel);padding:10px 14px;font-size:.84rem}
 details.how summary{cursor:pointer;font-weight:500;color:var(--fg2)}
 details.how[open] summary{margin-bottom:6px}
@@ -915,7 +917,7 @@ VISTAS_ACTIVACION = r"""<section class="view" id="v-campanas" data-title="Campa�
     </div></section>
   <div class="cm">
     <section class="panel"><div class="ph"><h2>Campañas</h2><span class="sub">por prioridad</span></div><div class="clist" role="tablist">{ITEMS}
-      <button type="button" class="citem" disabled style="cursor:not-allowed;opacity:.7"><span class="code">HIST07</span><b>7. Retención base histórica</b><span>Bloqueada por falta de teléfonos · {HIST} jugadores</span></button></div></section>
+      <button type="button" class="citem" disabled style="cursor:not-allowed;opacity:.7"><span class="code">7</span><b>Retención de la base histórica</b><span>Bloqueada por falta de teléfonos · {HIST} jugadores</span></button></div></section>
     <div>{DETS}</div>
   </div>
 </section>
@@ -1003,6 +1005,7 @@ JS = r"""
   function show(id){
     let sub = null;
     if(id.startsWith('jugador/')){ sub = decodeURIComponent(id.slice(8)); id = 'crm'; }
+    if(id.startsWith('campana/')){ sub = id.slice(8); id = 'campanas'; }
     if(!views.some(v => v.id === 'v-' + id)) id = 'inicio';
     views.forEach(v => v.hidden = v.id !== 'v-' + id);
     links.forEach(a => a.classList.toggle('on', a.getAttribute('href') === '#' + id));
@@ -1024,6 +1027,10 @@ JS = r"""
   }
   items.forEach(b => b.addEventListener('click', () => selectCamp(b.dataset.c)));
   if(items.length) selectCamp(items[0].dataset.c);
+  document.addEventListener('vista', e => {
+    if(e.detail.id !== 'campanas' || !e.detail.sub) return;
+    if(items.some(b => b.dataset.c === e.detail.sub)){ selectCamp(e.detail.sub); document.querySelector('.cm').scrollIntoView({block: 'start'}); }
+  });
   document.querySelectorAll('.vars').forEach(g => {
     const btns = [...g.querySelectorAll('button')];
     btns.forEach(b => b.addEventListener('click', () => {
@@ -1062,7 +1069,7 @@ JS = r"""
           (ok ? `<span class="pill ok">Confirmable</span> El efecto del escenario (+${nf(pp, 1)} p.p.) supera el mínimo detectable (±${nf(c.mde, 1)} p.p.).`
               : `<span class="pill warn">No confirmable</span> El efecto del escenario (+${nf(pp, 1)} p.p.) es menor que el mínimo detectable (±${nf(c.mde, 1)} p.p.); se lee como piloto.`);
       }
-      return `<tr><td><b>${c.c}</b> ${c.t}</td><td>${c.obj}</td><td class="num">${nf(c.envio)}</td><td class="num">${nf(c.base * 100, 1)} %</td>
+      return `<tr><td><a class="camp" href="#campana/${c.c}">${c.t}</a></td><td>${c.obj}</td><td class="num">${nf(c.envio)}</td><td class="num">${nf(c.base * 100, 1)} %</td>
         <td class="num">${nf(s0)}</td><td class="num">${nf(s1)}</td><td class="num"><b>+${nf(a)}</b></td><td class="num">${money(a * c.ticket)}</td>
         <td class="num">${cpa}</td><td>${lift === 0 ? '—' : (ok ? '<span class="pill ok">Sí</span>' : '<span class="pill warn">Piloto</span>')}</td></tr>`;
     });
@@ -1220,7 +1227,7 @@ JS_CRM = r"""
   function llenarFiltros(){
     const sel = (id, opciones) => { document.getElementById(id).innerHTML += opciones.map(([v, t]) => `<option value="${esc(v)}">${esc(t)}</option>`).join(''); };
     sel('crm-cv', F.cats.cv.map(c => [c, N.cv[c] || c]));
-    sel('crm-camp', F.cats.camp.map(c => [c, `${c} · ${N.camp[c] || ''}`]));
+    sel('crm-camp', F.cats.camp.map(c => [c, N.camp[c] || c]).sort((a, b) => a[1].localeCompare(b[1])));
   }
   function filtrar(){
     const q = document.getElementById('crm-q').value.trim();
@@ -1257,7 +1264,7 @@ JS_CRM = r"""
   }
   function campTxt(i){
     const r = cat('res', i);
-    if(r === 'seleccionado') return `<code>${esc(cat('camp', i))}</code> <span class="muted small">${cat('grp', i) === 'control' ? 'control' : 'envío'}</span>`;
+    if(r === 'seleccionado') return `<a class="camp" href="#campana/${esc(cat('camp', i))}">${esc(N.camp[cat('camp', i)] || '')}</a> <span class="muted small">${cat('grp', i) === 'control' ? 'control' : 'envío'}</span>`;
     return '<span class="muted small">—</span>';
   }
   function pintarLista(){
@@ -1286,8 +1293,8 @@ JS_CRM = r"""
     if(col('jr', i) === 1) return ['crit', 'Fuera de mensajes promocionales', 'Tiene señales de juego responsable.'];
     const r = cat('res', i), c = cat('camp', i);
     if(r === 'seleccionado') return cat('grp', i) === 'control'
-      ? ['neu', `${c}: grupo de control`, 'No recibe SMS en esta ola; con él se mide el efecto de la campaña.']
-      : ['ok', `${c}: ${N.camp[c] || ''}`, `Recibe el SMS de esta ola${cat('var', i) && cat('var', i) !== 'general' ? ' (variante ' + cat('var', i).replace('_', ' ') + ')' : ''}.`];
+      ? ['neu', `${N.camp[c] || c}: grupo de control`, 'No recibe SMS en esta ola; con él se mide el efecto de la campaña.']
+      : ['ok', `Campaña ${N.camp[c] || c}`, `Recibe el SMS de esta ola${cat('var', i) && cat('var', i) !== 'general' ? ' (variante ' + cat('var', i).replace('_', ' ') + ')' : ''}.`];
     if(col('ct', i) !== 1) return ['warn', 'No contactable', N.ec[cat('ec', i)] || ''];
     for(const [m, t, d] of [['cruzada_deportes', 'Candidato a deportes', 'Probabilidad alta de hacer su primera apuesta deportiva.'],
                             ['habito', 'Candidato a volverse habitual', 'Enviarle la agenda de partidos de su modalidad.'],
@@ -1366,11 +1373,29 @@ JS_CRM = r"""
   document.getElementById('crm-q').addEventListener('input', () => { clearTimeout(t); t = setTimeout(() => F && filtrar(), 200); });
   document.getElementById('crm-prev').addEventListener('click', () => { pagina--; pintarLista(); });
   document.getElementById('crm-next').addEventListener('click', () => { pagina++; pintarLista(); });
-  document.getElementById('crm-body').addEventListener('click', e => { const r = e.target.closest('.crm-row'); if(r) location.hash = 'jugador/' + encodeURIComponent(r.dataset.id); });
+  document.getElementById('crm-body').addEventListener('click', e => { if(e.target.closest('a')) return; const r = e.target.closest('.crm-row'); if(r) location.hash = 'jugador/' + encodeURIComponent(r.dataset.id); });
   document.getElementById('crm-body').addEventListener('keydown', e => { const r = e.target.closest('.crm-row'); if(r && e.key === 'Enter') location.hash = 'jugador/' + encodeURIComponent(r.dataset.id); });
   window.__show();
 })();
 """
+
+
+# Nombres visibles de las campañas. Los códigos (ACT01, RET04…) quedan solo para uso interno y exportes.
+NOMBRES_CAMP = {"ACT01": "Bienvenida", "ONB02": "Segunda recarga", "XS03": "Invitación a deportes",
+                "RET04": "Retención", "ACT05": "Recordatorio de recarga", "REC06": "Reactivación",
+                "HIST07": "Retención de la base histórica"}
+
+
+def nombrar_campanas(html_txt):
+    """Cambia los códigos de campaña visibles por su nombre, con enlace a la campaña en Campañas SMS.
+    No toca scripts, atributos ni parámetros (data-c, href, utm_campaign=…)."""
+    patron = re.compile(r'(?<![\w"#/=\-])(' + "|".join(NOMBRES_CAMP) + r')(?![\w"])')
+    enlace = lambda m: f'<a class="camp" href="#campana/{m.group(1)}">{NOMBRES_CAMP[m.group(1)]}</a>'  # noqa: E731
+    partes = re.split(r'(<script\b.*?</script>|<style\b.*?</style>)', html_txt, flags=re.S)
+    for k in range(0, len(partes), 2):
+        t = re.sub(r'<code>(' + "|".join(NOMBRES_CAMP) + r')</code>', lambda m: enlace(m), partes[k])
+        partes[k] = re.sub(r'>([^<]*)<', lambda m: ">" + patron.sub(enlace, m.group(1)) + "<", t)
+    return "".join(partes)
 
 
 def info(tip):
@@ -1609,7 +1634,7 @@ def construir_html(D):
          f"El {n(pct_24h, 0)} % de quienes recargan lo hace en las primeras 24 h; después del día 7, sin mensajes, solo el {CF['tasa_act05'][1]}.",
          "ACT01 y ACT05: explicar cómo recargar", "Diaria", "Media"),
         ("2_nuevo_en_activacion", "Registrado desde el 1-jul; primera actividad en los últimos 30 días",
-         f"Entre el {CF['repite']} de quienes recargan hace una segunda recarga.", "ONB02: lograr la segunda recarga", "Semanal", "Alta"),
+         f"Entre el {CF['repite']} de quienes recargan hace una segunda recarga.", "ONB02: acompañar sus primeras semanas", "Semanal", "Alta"),
         ("3_activo", f"Última recarga, apuesta o ronda de casino hace {int(P['dias_activo_max'])} días o menos",
          f"El {n(100 * (1 - cv.set_index('ciclo_vida').loc['3_activo'].contactables / cv.set_index('ciclo_vida').loc['3_activo'].total), 0)} % no tiene teléfono en los archivos.", "Solo mensajes de servicio", "Semanal", "Alta"),
         ("4_enfriandose", f"Última actividad hace {int(P['dias_activo_max']) + 1}-{int(P['dias_enfriando_max'])} días",
@@ -1718,7 +1743,7 @@ def construir_html(D):
         excluidos = int(ea[[k for k in ea.index if k.startswith("excluido")]].sum())
         supr = int(ea.get("suprimido_por_prioridad", 0))
         tk, tk_lbl = TICKET[c["c"]]
-        camps_js.append(dict(c=c["c"], t=c["t"], obj=c["obj"], accion=ACCION[c["c"]], envio=int(r.envio), control=int(r.control),
+        camps_js.append(dict(c=c["c"], t=NOMBRES_CAMP[c["c"]], obj=c["obj"], accion=ACCION[c["c"]], envio=int(r.envio), control=int(r.control),
                              base=p0, mde=round(m, 2) if m else None, ticket=float(tk), vent=c["vent"]))
         cps = copies[copies.campana == c["c"]]
         bubbles, var_btns = "", ""
@@ -1731,10 +1756,10 @@ def construir_html(D):
                         f'<div class="smeta">Destino: {esc(cp.destino)}</div></div>')
             var_btns += f'<button type="button" class="btn" data-v="{cp.variante}" aria-pressed="{"true" if j == 0 else "false"}">{vname}</button>'
         vars_html = f'<div class="vars seg">{var_btns}</div>' if len(cps) > 1 else ""
-        items.append(f'<button type="button" class="citem" data-c="{c["c"]}" aria-selected="false"><span class="code">{c["c"]}</span>'
-                     f'<b>{i}. {c["t"]}</b><span>{n(r.envio)} SMS · objetivo: {c["obj"].lower()}</span></button>')
+        items.append(f'<button type="button" class="citem" data-c="{c["c"]}" aria-selected="false"><span class="code">{i}</span>'
+                     f'<b>{NOMBRES_CAMP[c["c"]]}</b><span>{n(r.envio)} SMS · objetivo: {c["obj"].lower()}</span></button>')
         dets.append(f"""<div class="cdet" data-c="{c['c']}" hidden>
-  <div class="vhead"><div><h2 style="font-size:1.15rem">{i}. {c['t']}</h2><p>{c['hall']}</p></div>
+  <div class="vhead"><div><h2 style="font-size:1.15rem">{NOMBRES_CAMP[c['c']]}</h2><p>{c['hall']}</p></div>
     <div style="display:flex;gap:8px;flex-wrap:wrap"><span class="chip warn">Pendiente de validación</span><span class="chip">{c['tipo']}</span></div></div>
   <div class="steps">
     <section class="step"><div class="sn">1</div><div class="sb"><h3>A quién</h3>
@@ -2075,7 +2100,7 @@ def construir_html(D):
   <div class="g g4">
     {tile('Jugadores', n(D['universo']), f"{n(reg_tot.j)} con teléfono", tip="Todos los que aparecen en algún archivo desde el 1-jul. Solo los registrados desde julio traen teléfono.")}
     {tile('Monto sin contacto', f"{n(pct_apu_hist, 0)}<small> %</small>", f'del monto apostado viene de jugadores sin teléfono · <a href="#ajustes">Pedir datos</a>', acc=True, tip=f"Son {n(hist.j)} jugadores registrados antes de julio; en los archivos no viene su teléfono.")}
-    {tile('Registrados que recargan', f"{n(conv_tot, 1)}<small> %</small>", f"{n(pct_24h, 0)} % de ellos, en las primeras 24 h", tip="Por eso conviene enviar el SMS de activación (ACT01) el mismo día del registro.")}
+    {tile('Registrados que recargan', f"{n(conv_tot, 1)}<small> %</small>", f"{n(pct_24h, 0)} % de ellos, en las primeras 24 h", tip="Por eso conviene enviar el SMS de Bienvenida el mismo día del registro.")}
     {tile('En campañas', n(pend), f'{n(total_envios)} SMS · {n(pend - total_envios)} control · <a href="#campanas">Ver</a>', tip="El grupo de control no recibe mensaje; con él se mide cuánto aporta el SMS.")}
   </div>
   <div class="g g-73">
@@ -2160,7 +2185,7 @@ def construir_html(D):
   <div class="g g4">
     {tile('Jugadores', n(tot_j), 'Con actividad o registro desde el 1-jul', tip="Cada uno tiene un perfil con más de 100 indicadores, disponible en la exportación de la base.")}
     {tile('Recargan y apuestan', n(activos_rec_apu), f'{n(100 * activos_rec_apu / tot_j, 0)} % de la base · <a href="#prediccion">Ver riesgo</a>', acc=True)}
-    {tile('Registrados sin actividad', n(nuevos_sin), f"{n(100 * nuevos_sin / tot_j, 0)} % · audiencia de ACT01 y ACT05", tip="Se registraron y nunca recargaron ni apostaron. ACT01 cubre los primeros 7 días; ACT05, del día 8 al 30.")}
+    {tile('Registrados sin actividad', n(nuevos_sin), f"{n(100 * nuevos_sin / tot_j, 0)} % · audiencia de ACT01 y ACT05", tip="Se registraron y nunca recargaron ni apostaron. Bienvenida cubre los primeros 7 días y Recordatorio de recarga, del día 8 al 30.")}
     {tile('Recargan sin apostar en deportes', n(int(pf[pf.act == 'Solo recarga'].j.sum())), f'Candidatos a venta cruzada (XS03)', tip=f"Desde el {fd(cas_d0)}, el {n(pct_sr_cas, 0)} % de quienes recargan sin apostar en deportes juega casino.")}
   </div>
   <section class="panel"><div class="ph"><h2>Composición por actividad</h2><span class="sub">Jugadores por tipo de actividad, {periodo_txt}</span></div><div class="pb">{f_pf}</div></section>
@@ -2354,7 +2379,7 @@ def construir_html(D):
 def main():
     D = cargar_app(cargar())
     out = REPORT_DIR / "informe_yajuego.html"
-    out.write_text(ocultar_modulos(construir_html(D)), encoding="utf-8")
+    out.write_text(nombrar_campanas(ocultar_modulos(construir_html(D))), encoding="utf-8")
     print(f"[ok] app: {out} ({out.stat().st_size / 1024:.0f} KB)")
 
 
