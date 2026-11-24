@@ -681,6 +681,19 @@ svg rect:hover,svg path:hover{opacity:.8}
 .task{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:9px 10px;font-size:.8rem;display:grid;gap:6px}
 .task .own{font-size:.7rem;color:var(--fg2);font-family:var(--f-mono)}
 
+/* Ayuda contextual: el detalle se abre al pasar el cursor o al tocar el ícono */
+.info{position:relative;display:inline-grid;place-items:center;width:15px;height:15px;margin-left:5px;border-radius:50%;border:1px solid var(--line);
+  font:600 .62rem/1 var(--f-ui);color:var(--fg2);cursor:help;vertical-align:1px;text-transform:none;letter-spacing:0}
+.info::after{content:attr(data-tip);position:absolute;z-index:30;left:50%;bottom:calc(100% + 8px);transform:translateX(-50%);width:max-content;max-width:280px;
+  padding:8px 10px;border-radius:8px;background:var(--fg);color:var(--panel);font:400 .76rem/1.45 var(--f-ui);text-align:left;white-space:normal;
+  opacity:0;pointer-events:none;transition:opacity .12s}
+.info:hover::after,.info:focus::after{opacity:1}
+@media (max-width:860px){.info::after{left:auto;right:-8px;transform:none;max-width:240px}}
+.todo{display:grid;gap:2px;border-left:3px solid var(--accent);padding:4px 0 4px 10px;font-size:.86rem}
+.todo b{font-size:.7rem;text-transform:uppercase;letter-spacing:.08em;color:var(--accent)}
+details.how{border:1px solid var(--line);border-radius:8px;background:var(--panel);padding:10px 14px;font-size:.84rem}
+details.how summary{cursor:pointer;font-weight:500;color:var(--fg2)}
+details.how[open] summary{margin-bottom:6px}
 .note{border:1px solid var(--line);border-left:3px solid var(--accent);background:var(--panel);border-radius:8px;padding:12px 14px;display:grid;gap:4px;font-size:.86rem}
 .note b{font-size:.72rem;text-transform:uppercase;letter-spacing:.08em;color:var(--accent)}
 .muted{color:var(--fg2)} .small{font-size:.8rem}
@@ -788,7 +801,7 @@ def icon(k):
 
 
 VISTAS_ACTIVACION = r"""<section class="view" id="v-campanas" data-title="Campañas SMS">
-  <div class="vhead"><div><h1>Campañas SMS</h1><p>Seis campañas, una por jugador en cada ola, sin bonos ni promociones. Primero, qué resultado se puede esperar de la ola completa; abajo, el detalle de cada campaña.</p></div></div>
+  <div class="vhead"><div><h1>Campañas SMS</h1><p>Seis campañas listas para enviar: resultado esperado y detalle de cada una.</p></div></div>
   <section class="panel sim"><div class="ph"><h2>¿Qué resultado podemos esperar?</h2><span class="sub">Escenarios, no pronósticos: el grupo de control medirá el efecto real</span></div>
     <div class="pb">
       <div class="simctl">
@@ -809,7 +822,7 @@ VISTAS_ACTIVACION = r"""<section class="view" id="v-campanas" data-title="Campa�
         <div class="tile"><div class="lab">Costo por cada acción que agrega el SMS</div><div class="val" id="s-cpa">—</div><div class="ft" id="s-cost">Escribe arriba la tarifa por SMS del proveedor para calcularlo.</div></div>
       </div>
       <div class="tw"><table class="wide"><thead><tr><th>Campaña</th><th>Objetivo</th><th class="num">SMS</th><th class="num">Tasa natural</th><th class="num">Sin SMS</th><th class="num">Con SMS</th><th class="num">Adicionales</th><th class="num">Monto asociado</th><th class="num">Costo / adicional</th><th>¿Se podrá confirmar?</th></tr></thead><tbody id="sim-body"></tbody></table></div>
-      <div class="note"><b>Lectura de Vincero</b><span>Con efectos realistas para un SMS sin incentivo (+10 % a +25 % sobre la tasa natural), el resultado de una sola ola es pequeño y ninguna campaña alcanza a confirmarlo con su grupo de control. Por eso proponemos leer la ola 1 como piloto, acumular 2 o 3 olas antes de decidir, y priorizar el acceso a la base histórica: con miles de jugadores más, los mismos efectos sí se pueden confirmar.</span></div>
+      <div class="note"><b>Lectura de Vincero</b><span>Con efectos realistas (+10 % a +25 %), una sola ola no alcanza para confirmar resultados. Leer la ola 1 como piloto, acumular 2 o 3 olas y conseguir la base histórica para ganar volumen.</span></div>
       <p class="small muted">Tasa natural: lo que hizo un grupo equivalente sin SMS en un corte simulado al {T_SIM}, 30 días antes del corte. Monto asociado: acciones adicionales × monto mediano de esa acción (recarga o apuesta); no equivale a ingresos. "Se podrá confirmar" compara el efecto del escenario con el efecto mínimo detectable del grupo de control.</p>
     </div></section>
   <div class="cm">
@@ -820,7 +833,7 @@ VISTAS_ACTIVACION = r"""<section class="view" id="v-campanas" data-title="Campa�
 </section>
 
 <section class="view" id="v-medicion" data-title="Medición">
-  <div class="vhead"><div><h1>Medición</h1><p>Cada campaña se mide igual: la misma audiencia se parte en dos, un grupo recibe el SMS y el otro no. La diferencia entre ambos es lo que aporta el SMS; lo demás habría pasado igual.</p></div></div>
+  <div class="vhead"><div><h1>Medición</h1><p>Cada campaña se mide contra un grupo que no recibe SMS.</p></div></div>
   <section class="panel"><div class="ph"><h2>Línea de tiempo de una ola</h2></div><div class="pb">
     <ol class="tl">
       <li><span class="d">Día 0</span><b>Selección y sorteo</b><span>Audiencia al corte, cruce con lista de supresión y división envío / control (80 / 20).</span></li>
@@ -1079,20 +1092,21 @@ def insight(titulo, metrica, metrica_lbl, obs, evid, interp, accion, chart="", t
   <div class="ins{'' if chart else ' one'}">
     <div class="txt">
       <div class="metric"><b>{metrica}</b><span>{metrica_lbl}</span></div>
-      <dl class="kv">
-        <dt>Observado</dt><dd>{obs}</dd>
-        <dt>Evidencia</dt><dd>{evid}</dd>
-        <dt>Lectura</dt><dd>{interp}</dd>
-        <dt>Acción</dt><dd class="act">{accion}</dd>
-      </dl>
+      <p class="small">{interp}</p>
+      <div class="todo"><b>Qué hacer</b><span>{accion}</span></div>
+      <details class="how"><summary>Ver detalle</summary><p class="small">{obs}</p><p class="small" style="margin-top:6px">{evid}</p></details>
     </div>
     {f'<div class="fig">{chart}</div>' if chart else ''}
   </div>
 </section>"""
 
 
-def tile(lab, val, ft, acc=False):
-    return f'<div class="tile{" acc" if acc else ""}"><div class="lab">{lab}</div><div class="val">{val}</div><div class="ft">{ft}</div></div>'
+def info(tip):
+    return f'<span class="info" tabindex="0" role="note" aria-label="{esc(tip)}" data-tip="{esc(tip)}">i</span>' if tip else ""
+
+
+def tile(lab, val, ft, acc=False, tip=None):
+    return f'<div class="tile{" acc" if acc else ""}"><div class="lab">{lab}{info(tip)}</div><div class="val">{val}</div><div class="ft">{ft}</div></div>'
 
 
 def construir_html(D):
@@ -1321,26 +1335,25 @@ def construir_html(D):
     seg_def = [
         ("1_nuevo_sin_actividad", "Registrado desde el 1-jul, sin recargas ni apuestas",
          f"{n(pct_24h, 0)} % de quienes convierten lo hacen en 24 h; después de 7 días la conversión natural es {CF['tasa_act05'][1]}.",
-         "Activar: cómo y por qué medio recargar", "Diaria", "Alta en la regla, media en el efecto"),
+         "ACT01 y ACT05: explicar cómo recargar", "Diaria", "Alta en la regla, media en el efecto"),
         ("2_nuevo_en_activacion", "Registrado desde el 1-jul; primera actividad en los últimos 30 días",
-         f"{CF['repite']} de los convertidos hace una segunda recarga.", "Acompañar las primeras semanas", "Semanal", "Alta"),
+         f"{CF['repite']} de los convertidos hace una segunda recarga.", "ONB02: lograr la segunda recarga", "Semanal", "Alta"),
         ("3_activo", f"Última recarga, apuesta o ronda de casino hace ≤ {int(P['dias_activo_max'])} días",
          f"14 días ≈ p85 del intervalo entre días de apuesta. {n(100 * (1 - cv.set_index('ciclo_vida').loc['3_activo'].contactables / cv.set_index('ciclo_vida').loc['3_activo'].total), 0)} % sin teléfono en los archivos.", "Solo mensajes de servicio", "Semanal", "Alta"),
         ("4_enfriandose", f"Última actividad hace {int(P['dias_activo_max']) + 1}-{int(P['dias_enfriando_max'])} días",
-         f"{CF['tasa_ret04'][1]} vuelve solo en 14 días (corte simulado al {fd(t_sim)}).", "Recordatorio con agenda deportiva", "Semanal", "Media: falta casino 1-27 oct"),
-        ("5_inactivo_31_60", "Última actividad hace 31-60 días", f"{CF['tasa_rec06'][1]} vuelve solo en 14 días.", "Recuperación según preferencia", "Mensual", "Media: falta casino 1-27 oct"),
-        ("6_inactivo_61_mas", "Última actividad hace más de 60 días", "Puede incluir a quien solo jugó casino antes del 28-oct (sin datos de casino).", "No contactar hasta tener casino de octubre", "Mensual", "Baja"),
+         f"{CF['tasa_ret04'][1]} vuelve solo en 14 días (corte simulado al {fd(t_sim)}).", "RET04: recordatorio con agenda deportiva", "Semanal", "Media: falta casino 1-27 oct"),
+        ("5_inactivo_31_60", "Última actividad hace 31-60 días", f"{CF['tasa_rec06'][1]} vuelve solo en 14 días.", "REC06: recuperar según su preferencia", "Mensual", "Media: falta casino 1-27 oct"),
+        ("6_inactivo_61_mas", "Última actividad hace más de 60 días", "Puede incluir a quien solo jugó casino antes del 28-oct (sin datos de casino).", "No contactar por ahora", "Mensual", "Baja"),
         ("7_sin_actividad_de_juego_observada", "Solo aparece en Retiros", "Retiró sin recargar ni apostar en deportes.", "Ninguna", "Mensual", "Baja"),
     ]
     cvi = cv.set_index("ciclo_vida")
-    filas_seg = [dict(nombre=f"<strong>{NOMBRES_CV[c]}</strong>", regla=r, tam=n(cvi.loc[c].total),
-                      pct=f"{n(100 * cvi.loc[c].total / cv.total.sum(), 1)} %", cont=n(cvi.loc[c].contactables),
-                      jr=n(cvi.loc[c].jr), comp=comp, obj=obj, act=act, conf=conf)
+    filas_seg = [dict(nombre=f"<strong>{NOMBRES_CV[c]}</strong>{info(f'{r}. {comp} Confianza: {conf.lower()}.')}",
+                      tam=f"{n(cvi.loc[c].total)} <span class='muted small'>· {n(100 * cvi.loc[c].total / cv.total.sum(), 0)} %</span>",
+                      cont=n(cvi.loc[c].contactables), obj=obj, act=act)
                  for c, r, comp, obj, act, conf in seg_def]
-    t_seg = table(pd.DataFrame(filas_seg), [("nombre", "Segmento"), ("regla", "Regla"), ("tam", "Jugadores"), ("pct", "% pobl."),
-                                            ("cont", "Contactables"), ("jr", "Señal JR"), ("comp", "Comportamiento"),
-                                            ("obj", "Objetivo"), ("act", "Recalcular"), ("conf", "Confianza")],
-                  num=("tam", "pct", "cont", "jr"), cls="wide")
+    t_seg = table(pd.DataFrame(filas_seg), [("nombre", "Segmento"), ("tam", "Jugadores"), ("cont", "Contactables"),
+                                            ("obj", "Qué hacer"), ("act", "Se actualiza")],
+                  num=("tam", "cont"))
     hip_def = [
         ("h_sin_recarga_0_7d", "Sin recarga, 0-7 días", "Historia completa, sin recargas ni apuestas, no depositante, antigüedad ≤ 7 días", "ACT01"),
         ("h_sin_recarga_8_30d", "Sin recarga, 8-30 días", "Ídem con antigüedad 8-30 días", "ACT05"),
@@ -1533,57 +1546,47 @@ def construir_html(D):
         return f"{x} día" if x == 1 else f"{x} días"
 
     # Cómo leer cada factor: título, frase con probabilidades concretas y acción. {lo}/{hi}: valores; {plo}/{phi}: probabilidades.
+    # Cada factor: título, comparación corta (probabilidad con valor bajo · alto) y acción en una línea.
     FACTORES_TXT = {
         "abandono": {
-            "dias_activos_30": ("Frecuencia de juego en el último mes",
-                                "Un jugador que recargó o apostó solo {lo_d} de los últimos 30 tiene {plo} de probabilidad de no volver el próximo mes. Si jugó {hi_d}, baja a {phi}.",
-                                "Los de baja frecuencia son los primeros a retener: en el Constructor, filtra «Riesgo de abandono alto» y «Enfriándose» para RET04."),
-            "dias_sin_actividad": ("Días desde su última recarga o apuesta",
-                                   "Quien jugó hace {lo_d} tiene {plo} de probabilidad de no volver el próximo mes; quien lleva {hi_d} sin recargar ni apostar, {phi}.",
-                                   "No esperar a que pasen 30 días: RET04 debe salir apenas el jugador supera su ritmo habitual, entre el día 7 y el 14 para la mayoría."),
-            "verificado": ("Celular verificado",
-                           "Un jugador sin el celular verificado tiene {plo} de probabilidad de irse; con el celular verificado, {phi}.",
-                           "Pedir la verificación del celular en el registro y en el mensaje de bienvenida: es un paso sencillo que acompaña a los jugadores que se quedan."),
-            "antiguedad_dias": ("Tiempo como jugador",
-                                "Un jugador que empezó a jugar hace {lo_d} tiene {plo} de probabilidad de irse; uno que empezó hace {hi_d}, {phi}.",
-                                "Los primeros dos meses son los de mayor riesgo: la segunda recarga (ONB02) rinde más que recuperar a quien ya se fue."),
-            "registrado_desde_julio": ("Jugador nuevo o de la base histórica",
-                                       "Un jugador de la base anterior a julio tiene {plo} de probabilidad de irse; uno registrado desde julio, {phi}.",
-                                       "Los nuevos se van más: acompañarlos en sus primeras semanas con mensajes de servicio (cómo recargar, agenda deportiva)."),
+            "dias_activos_30": ("Frecuencia en el último mes", "Jugó {lo_d} de 30: {plo} · jugó {hi_d}: {phi}",
+                                "Retener primero a los de baja frecuencia (RET04)."),
+            "dias_sin_actividad": ("Días sin jugar", "{lo_d} sin jugar: {plo} · {hi_d}: {phi}",
+                                   "Enviar RET04 entre el día 7 y el 14 sin jugar."),
+            "verificado": ("Celular verificado", "Sin verificar: {plo} · verificado: {phi}",
+                           "Pedir verificar el celular al registrarse."),
+            "antiguedad_dias": ("Tiempo como jugador", "{lo_d}: {plo} · {hi_d}: {phi}",
+                                "Reforzar los dos primeros meses (ONB02)."),
+            "registrado_desde_julio": ("Nuevo o histórico", "Base histórica: {plo} · registrado desde julio: {phi}",
+                                       "Acompañar las primeras semanas del jugador nuevo."),
         },
         "activacion": {
-            "aposto_sin_recargar": ("Ya apostó sin haber recargado",
-                                    "Un registrado que no ha apostado tiene {plo} de probabilidad de hacer su primera recarga en las próximas 2 semanas; uno que ya apostó sin recargar, {phi}.",
-                                    "Son los más cerca de convertir: ponerlos primero en ACT01 con un mensaje sobre cómo recargar."),
-            "verificado": ("Celular verificado",
-                           "Sin el celular verificado, {plo} de probabilidad de recargar en 2 semanas; con el celular verificado, {phi}.",
-                           "Recordar la verificación del celular junto con la invitación a recargar."),
-            "dias_desde_registro": ("Días desde el registro sin recargar",
-                                    "Quien se registró hace {lo_d} y no ha recargado tiene {plo} de probabilidad de hacerlo en las próximas 2 semanas; a los {hi_d}, solo {phi}.",
-                                    "El SMS de activación debe salir en las primeras 24-72 horas (ACT01). Después del día 21 casi nadie convierte y el SMS difícilmente paga su costo."),
-            "telefono_valido": ("Teléfono válido en el registro",
-                                "Con un teléfono inválido o incompleto, {plo} de probabilidad de recargar en 2 semanas; con un teléfono válido, {phi}.",
-                                "Validar el formato del celular en el formulario de registro: además de convertir más, es la única forma de contactarlo."),
+            "aposto_sin_recargar": ("Ya apostó sin recargar", "No ha apostado: {plo} · ya apostó: {phi}",
+                                    "Contactarlos primero en ACT01."),
+            "verificado": ("Celular verificado", "Sin verificar: {plo} · verificado: {phi}",
+                           "Recordar la verificación al invitar a recargar."),
+            "dias_desde_registro": ("Días desde el registro", "{lo_d}: {plo} · {hi_d}: {phi}",
+                                    "Enviar ACT01 en las primeras 24-72 h."),
+            "telefono_valido": ("Teléfono válido", "Inválido: {plo} · válido: {phi}",
+                                "Validar el celular en el formulario de registro."),
         },
     }
     PRED_TXT = {
-        "abandono": dict(titulo="¿Quién va a dejar de jugar en los próximos 30 días?",
-                         pob="jugadores que recargaron o apostaron en los últimos 30 días",
-                         evento="dejarían de recargar y apostar en los próximos 30 días", corto="abandonos",
-                         auc_txt="Entre un jugador que se fue y uno que siguió, el modelo le da más riesgo al que se fue {} de cada 100 veces.", banda="Riesgo de abandono alto",
-                         pasos=[f'Abre el <a href="#audiencias">Constructor</a> y marca «Riesgo de abandono alto» con «Enfriándose (15-30 días)»: es la audiencia de RET04 ordenada por quién tiene más probabilidad de irse.',
-                                "A los activos con riesgo alto, enviar solo mensajes de servicio (agenda, cómo recargar); todavía están jugando y una promoción no hace falta.",
-                                "Los de riesgo alto sin teléfono son de la base anterior a julio: son el argumento para pedirle a YAjuego sus datos de contacto (ver Pendientes)."],
-                         accion={"3_activo": "Mensajes de servicio a los de riesgo alto", "4_enfriandose": "RET04: empezar por riesgo alto y contactables",
-                                 "2_nuevo_en_activacion": "ONB02: acompañar a los de riesgo alto", "5_inactivo_31_60": "REC06"}),
-        "activacion": dict(titulo="¿Quién va a hacer su primera recarga en los próximos 14 días?",
-                           pob="registrados en los últimos 30 días que todavía no recargan",
-                           evento="harían su primera recarga en los próximos 14 días", corto="primeras recargas",
-                           auc_txt="Entre un registrado que recargó y uno que no, el modelo le da más probabilidad al que recargó {} de cada 100 veces.", banda="Probabilidad de activarse alta",
-                           pasos=[f'Abre el <a href="#audiencias">Constructor</a> y marca «Prob. de activarse alta»: son los primeros a contactar en ACT01 y ACT05.',
-                                  "Con probabilidad baja y más de 21 días desde el registro, el SMS difícilmente paga su costo: enviarlo solo como prueba con grupo de control.",
-                                  "Automatizar la carga diaria para que ACT01 salga a las 24-72 horas del registro, cuando la probabilidad es más alta."],
-                           accion={"1_nuevo_sin_actividad": "ACT01 (0-7 días) y ACT05 (8-30 días), empezando por probabilidad alta"}),
+        "abandono": dict(titulo="Abandono en 30 días", pob="jugadores activos en los últimos 30 días",
+                         evento="dejarían de jugar", corto="abandonos", banda="Riesgo alto", prob="Probabilidad de irse",
+                         auc_tip="Entre un jugador que se fue y uno que siguió, el modelo le da más riesgo al que se fue {} de cada 100 veces.",
+                         pasos=['RET04: en el <a href="#audiencias">Constructor</a>, filtra «Riesgo de abandono alto» + «Enfriándose».',
+                                "Activos con riesgo alto: solo mensajes de servicio.",
+                                'Riesgo alto sin teléfono: pedir sus datos a YAjuego (<a href="#ajustes">Pendientes</a>).'],
+                         accion={"3_activo": "Mensajes de servicio", "4_enfriandose": "RET04",
+                                 "2_nuevo_en_activacion": "ONB02", "5_inactivo_31_60": "REC06"}),
+        "activacion": dict(titulo="Primera recarga en 14 días", pob="registrados sin recarga en los últimos 30 días",
+                           evento="harían su primera recarga", corto="primeras recargas", banda="Probabilidad alta", prob="Probabilidad de recargar",
+                           auc_tip="Entre un registrado que recargó y uno que no, el modelo le da más probabilidad al que recargó {} de cada 100 veces.",
+                           pasos=['ACT01 y ACT05: en el <a href="#audiencias">Constructor</a>, empieza por «Prob. de activarse alta».',
+                                  "Probabilidad baja y más de 21 días: enviar solo como prueba con control.",
+                                  "Automatizar la carga diaria para enviar ACT01 a las 24-72 h."],
+                           accion={"1_nuevo_sin_actividad": "ACT01 (0-7 días) · ACT05 (8-30 días)"}),
     }
 
     def frase(f, k):
@@ -1624,35 +1627,33 @@ def construir_html(D):
             sube = f["p_hasta"] > f["p_desde"]
             malo = sube == (k == "abandono")
             fac += (f'<div class="li"><span class="ic {"crit" if malo else "ok"}">{"↑" if sube else "↓"}</span><div><b>{esc(tit)}</b>'
-                    f'<span>{txt}</span>' + (f'<span style="display:block;margin-top:4px;color:var(--fg)"><b style="display:inline;font-size:.8rem">Qué hacer:</b> {acc}</span>' if acc else '')
+                    f'<span class="mono" style="display:block">{txt}</span>' + (f'<span style="display:block;color:var(--accent)">→ {acc}</span>' if acc else '')
                     + '</div><span></span></div>')
         pasos = "".join(f"<li>{x}</li>" for x in tx["pasos"])
         azar = "al azar se llegaría al 20 %"
         pred_html += f"""
-  <section class="panel"><div class="ph"><h2>{tx['titulo']}</h2><span class="sub">Evalúa a {n(tot)} {tx['pob']}</span></div><div class="pb">
+  <section class="panel"><div class="ph"><h2>{tx['titulo']}</h2><span class="sub">{n(tot)} {tx['pob']}</span></div><div class="pb">
     <div class="g g4">
-      {tile('Pronóstico', n(esp), f"jugadores {tx['evento']}, según el modelo: el {n(100 * esp / tot, 0)} % de los {n(tot)} evaluados.", acc=True)}
-      {tile(tx['banda'], n(n_alta), f"Es el 20 % con mayor probabilidad (en promedio {pct(p_alta, 0 if p_alta >= 0.1 else 1)}). {n(c_alta)} tienen teléfono y se pueden contactar.")}
-      {tile('Si contactamos a ese 20 %', f"{n(100 * m['captura_top20'], 0)}<small> %</small>", f"de los {tx['corto']} quedan cubiertos; {azar}. Comprobado con datos que el modelo no vio.")}
-      {tile('Confiabilidad', n(m['auc'], 2), f"De 0,5 (azar) a 1 (perfecto). {tx['auc_txt'].format(n(100 * m['auc'], 0))}")}
+      {tile('Pronóstico', n(esp), f"{tx['evento']} · {n(100 * esp / tot, 0)} % de {n(tot)}", acc=True, tip=f"Suma de las probabilidades de los {n(tot)} {tx['pob']}.")}
+      {tile(tx['banda'], n(n_alta), f"{n(c_alta)} contactables · prob. media {pct(p_alta, 0 if p_alta >= 0.1 else 1)}", tip="El 20 % con mayor probabilidad.")}
+      {tile('Cobertura del 20 % alto', f"{n(100 * m['captura_top20'], 0)}<small> %</small>", f"de los {tx['corto']} reales (al azar: 20 %)", tip="Medido en jugadores que el modelo no usó para aprender.")}
+      {tile('Confiabilidad', n(m['auc'], 2), "Buena · 0,5 es azar, 1 es perfecto", tip=tx['auc_tip'].format(n(100 * m['auc'], 0)))}
     </div>
     <div class="g g2">
-      <div><h3 style="margin-bottom:4px">Qué explica la probabilidad</h3>
-        <p class="small muted" style="margin-bottom:8px">Comparación entre jugadores que solo se diferencian en ese factor. Son asociaciones: ayudan a elegir a quién contactar y cuándo, no prueban la causa.</p>
+      <div><h3 style="margin-bottom:8px">{tx['prob']} según…{info("Jugadores que solo se diferencian en ese factor. Es asociación, no causa: sirve para elegir a quién contactar y cuándo.")}</h3>
         <div class="list">{fac}</div>
-        {f'<p class="small muted" style="margin-top:8px">Casi no cambian la probabilidad: {", ".join(otros)}.</p>' if otros else ''}</div>
-      <div><h3 style="margin-bottom:4px">¿El modelo acierta?</h3>
-        <p class="small muted" style="margin-bottom:8px">Prueba con {n(m['n_validacion'])} jugadores al {pd.Timestamp(m['t_validacion']):%d-%m}, que el modelo no usó para aprender. Se ordenaron de menor a mayor probabilidad y se partieron en 10 grupos iguales: si las dos barras de cada grupo se parecen, el modelo acierta.</p>
+        {f'<p class="small muted" style="margin-top:8px">Pesan poco: {", ".join(otros)}.</p>' if otros else ''}</div>
+      <div><h3 style="margin-bottom:8px">Predicho vs. real{info(f"Prueba con {n(m['n_validacion'])} jugadores al {pd.Timestamp(m['t_validacion']):%d-%m} que el modelo no vio, en 10 grupos de menor a mayor probabilidad. Si las barras se parecen, el modelo acierta.")}</h3>
         {f_cal}</div>
     </div>
     <h3>Por segmento</h3>
     {t_seg_p}
-    <div class="note"><b>Qué hacer con esto</b><ol style="margin:4px 0 0;padding-left:18px;display:grid;gap:4px">{pasos}</ol></div>
+    <div class="note"><b>Qué hacer</b><ul style="margin:2px 0 0;padding-left:18px;display:grid;gap:2px">{pasos}</ul></div>
   </div></section>"""
     pred_html = f"""<section class="view" id="v-prediccion" data-title="Predicción">
-  <div class="vhead"><div><h1>Predicción</h1><p>Dos modelos estadísticos (regresión logística) que estiman, para cada jugador, la probabilidad de que deje de jugar o de que haga su primera recarga. Aprenden de lo que hicieron jugadores parecidos en las semanas anteriores y se vuelven a entrenar con cada carga de datos. Sirven para decidir a quién contactar primero; el efecto real del SMS lo mide el grupo de control.</p></div></div>
+  <div class="vhead"><div><h1>Predicción</h1><p>A quién contactar primero: probabilidad de abandono y de primera recarga por jugador.</p></div></div>
   {pred_html}
-  <div class="note"><b>Cómo se construyen</b><span>Para cada semana pasada se toma la foto de cada jugador (cuánto y cuándo jugó, cómo recarga, si verificó el celular) y se mira qué hizo después. El modelo aprende de esos casos y se prueba en la semana más reciente, que no vio. Solo usa información conocida en cada fecha: datos que YAjuego exporta como foto del día (saldo, último ingreso) quedan fuera porque revelarían el futuro. Casino aún no entra porque existe desde el {fd(cas_d0)}; los días sin datos ({sin_txt or '—'}) restan algo de precisión.</span></div>
+  <details class="how"><summary>¿Cómo funcionan los modelos?</summary>Regresión logística reentrenada con cada carga. Aprende de lo que hicieron jugadores parecidos en semanas anteriores y se prueba en la semana más reciente, que no vio. Solo usa datos conocidos en cada fecha; casino entra cuando tenga más historia (existe desde el {fd(cas_d0)}). Predice quién; el efecto del SMS lo mide el grupo de control.</details>
 </section>
 """
     nav = [("Operación", [("inicio", "home", "Inicio", ""), ("datos", "db", "Fuentes de datos", str(int((D['manifiesto'].estado == 'cargado').sum()))),
@@ -1696,34 +1697,34 @@ def construir_html(D):
   <main class="content">
 
 <section class="view" id="v-inicio" data-title="Inicio">
-  <div class="vhead"><div><h1>Resumen del espacio de trabajo</h1><p>Registros, recargas, apuestas deportivas, retiros y casino consolidados en una sola base. Cada carga recalcula todo sobre la base completa: análisis, segmentos, audiencias y campañas al {corte:%d-%m-%Y}.</p></div><span class="chip acc">Última actualización de datos: {ultimo:%d-%m-%Y}</span></div>
-  <section class="panel"><div class="ph"><h2>Base consolidada · {periodo_txt}</h2><a class="btn" href="#octubre">Ver tendencias</a></div><div class="pb">
+  <div class="vhead"><div><h1>Inicio</h1><p>Tu base al {corte:%d-%m-%Y}. Todo se recalcula con cada carga de datos.</p></div><span class="chip acc">Última actualización de datos: {ultimo:%d-%m-%Y}</span></div>
+  <section class="panel"><div class="ph"><h2>Actividad · {periodo_txt}</h2><a class="btn" href="#octubre">Ver tendencias</a></div><div class="pb">
     <div class="g g4">
-      {tile('Recargas', mm(rec.m), f"{n(rec.n)} recargas de {n(rec.j)} jugadores. Es dinero que los jugadores cargan a su cuenta, no ingreso de YAjuego.")}
-      {tile('Apuestas deportivas', mm(apu.m), f"Monto apostado en {n(apu.n)} apuestas de {n(apu.j)} jugadores.")}
-      {tile('Casino', mm(cas.ap), f"Monto apostado en {n(cas.rondas)} rondas de {n(cas.jug)} jugadores. Solo hay datos desde el {fd(cas_d0)}.", acc=True)}
-      {tile('Retiros', mm(retd.m), f"Pagado a {n(retd.j)} jugadores en {n(retd.n)} retiros, neto de comisiones.")}
+      {tile('Recargas', mm(rec.m), f"{n(rec.n)} recargas · {n(rec.j)} jugadores", tip="Dinero que los jugadores cargan a su cuenta. No es ingreso de YAjuego.")}
+      {tile('Apuestas deportivas', mm(apu.m), f"{n(apu.n)} apuestas · {n(apu.j)} jugadores", tip="Monto apostado. No es ingreso de YAjuego.")}
+      {tile('Casino', mm(cas.ap), f"{n(cas.jug)} jugadores · desde el {fd(cas_d0)}", acc=True, tip=f"Monto apostado en {n(cas.rondas)} rondas. No hay datos de casino antes del {fd(cas_d0)}.")}
+      {tile('Retiros', mm(retd.m), f"{n(retd.n)} retiros · {n(retd.j)} jugadores", tip="Monto pagado a los jugadores, neto de comisiones.")}
     </div>
-    <p class="small muted">Montos recargados y apostados: no equivalen a ingresos. Casino desde el {fd(cas_d0)}.{(' Sin ningún archivo: ' + sin_txt + '.') if sin_txt else ''}{(' Sin apuestas deportivas: ' + dep_txt + '.') if dep_txt else ''} {n_rec} combinaciones de día y fuente vienen parciales; los promedios por día solo usan días completos.</p>
+    <p class="small muted">Faltan datos: {', '.join(x for x in [sin_txt and 'todo el ' + sin_txt, dep_txt and 'deportes del ' + dep_txt, 'casino antes del ' + fd(cas_d0)] if x)}.{info(f"Además, {n_rec} combinaciones de día y fuente llegaron incompletas. Los promedios por día solo usan días completos.")} <a href="#ajustes">Ver pendientes</a></p>
   </div></section>
   <div class="g g4">
-    {tile('Jugadores', n(D['universo']), f"Aparecen en algún archivo desde el 1-jul. {n(reg_tot.j)} se registraron desde julio y tienen teléfono; el resto no.")}
-    {tile('Apostado por jugadores sin teléfono', f"{n(pct_apu_hist, 0)}<small> %</small>", f"del monto en deportes viene de {n(hist.j)} jugadores registrados antes de julio. Conseguir sus teléfonos es lo que más amplía el alcance (ver Pendientes).", acc=True)}
-    {tile('Registrados que recargan', f"{n(conv_tot, 1)}<small> %</small>", f"De cada 100 que se registran, {n(conv_tot, 0)} recargan alguna vez; {n(pct_24h, 0)} % de ellos lo hace en las primeras 24 h. Por eso ACT01 debe salir ese mismo día.")}
-    {tile('Jugadores en campañas', n(pend), f"{n(total_envios)} recibirían un SMS y {n(pend - total_envios)} quedan sin mensaje como grupo de control, para medir el efecto. Ver Campañas SMS.")}
+    {tile('Jugadores', n(D['universo']), f"{n(reg_tot.j)} con teléfono", tip="Todos los que aparecen en algún archivo desde el 1-jul. Solo los registrados desde julio traen teléfono.")}
+    {tile('Monto sin contacto', f"{n(pct_apu_hist, 0)}<small> %</small>", f'del apostado viene de jugadores sin teléfono · <a href="#ajustes">Pedir datos</a>', acc=True, tip=f"{n(hist.j)} jugadores registrados antes de julio generan este monto y no tenemos cómo contactarlos.")}
+    {tile('Registrados que recargan', f"{n(conv_tot, 1)}<small> %</small>", f"{n(pct_24h, 0)} % lo hace en las primeras 24 h", tip="Por eso el SMS de activación (ACT01) debe salir el mismo día del registro.")}
+    {tile('En campañas', n(pend), f'{n(total_envios)} SMS · {n(pend - total_envios)} control · <a href="#campanas">Ver</a>', tip="El grupo de control no recibe mensaje: sirve para medir cuánto aporta el SMS.")}
   </div>
   <div class="g g-73">
     <section class="panel"><div class="ph"><h2>Actividad diaria</h2><span class="sub">{periodo_txt} · días completos</span></div><div class="pb">{f_dia}</div></section>
-    <section class="panel"><div class="ph"><h2>Alertas</h2><span class="sub">Lo que bloquea o limita la operación</span></div><div class="pb flush"><div class="list">
-      <div class="li"><span class="ic crit">!</span><div><b>Base histórica sin teléfono</b><span>{n(hist.j)} jugadores generan el {n(pct_apu_hist, 0)} % del monto apostado y no son contactables con los archivos recibidos.</span></div><a class="btn" href="#ajustes">Ver</a></div>
-      <div class="li"><span class="ic crit">!</span><div><b>Consentimiento y autoexclusión</b><span>Ninguna audiencia se activa sin cruzar la lista de supresión.</span></div><a class="btn" href="#ajustes">Ver</a></div>
-      <div class="li"><span class="ic ok">✓</span><div><b>Audiencias recalculadas al {corte:%d-%m-%Y}</b><span>Usan toda la base, {periodo_txt}, incluido casino.</span></div><a class="btn" href="#plan">Ver</a></div>
-      <div class="li"><span class="ic crit">!</span><div><b>Huecos en los datos</b><span>{('Sin ningún archivo el ' + sin_txt + '; ') if sin_txt else ''}{('sin apuestas deportivas el ' + dep_txt + '; ') if dep_txt else ''}casino solo desde el {fd(cas_d0)}; {n_rec} combinaciones de día y fuente vienen parciales. Quien solo jugó casino antes del {fd(cas_d0)} puede aparecer como inactivo.</span></div><a class="btn" href="#octubre">Ver</a></div>
-      <div class="li"><span class="ic acc">i</span><div><b>Casino confirma la hipótesis</b><span>{n(pct_sr_cas, 0)} % de quienes recargan sin apostar en deportes juega casino (desde el {fd(cas_d0)}).</span></div><a class="btn" href="#octubre">Ver</a></div>
+    <section class="panel"><div class="ph"><h2>Alertas</h2></div><div class="pb flush"><div class="list">
+      <div class="li"><span class="ic crit">!</span><div><b>Base histórica sin teléfono</b><span>{n(hist.j)} jugadores, {n(pct_apu_hist, 0)} % del monto apostado.</span></div><a class="btn" href="#ajustes">Ver</a></div>
+      <div class="li"><span class="ic crit">!</span><div><b>Consentimiento y autoexclusión</b><span>Falta la lista de supresión para poder enviar.</span></div><a class="btn" href="#ajustes">Ver</a></div>
+      <div class="li"><span class="ic ok">✓</span><div><b>Audiencias recalculadas al {corte:%d-%m-%Y}</b><span>Con toda la base, {periodo_txt}.</span></div><a class="btn" href="#plan">Ver</a></div>
+      <div class="li"><span class="ic crit">!</span><div><b>Huecos en los datos</b><span>Casino solo desde el {fd(cas_d0)}{('; sin datos el ' + sin_txt) if sin_txt else ''}.</span></div><a class="btn" href="#octubre">Ver</a></div>
+      <div class="li"><span class="ic acc">i</span><div><b>Su producto es casino</b><span>{n(pct_sr_cas, 0)} % de quienes no apuestan en deportes juega casino.</span></div><a class="btn" href="#octubre">Ver</a></div>
       {'' if not fallas else f'<div class="li"><span class="ic crit">!</span><div><b>Diferencias en los datos</b><span>{fallas} de {n_ctrl} controles no cuadran: no enviar hasta revisarlos.</span></div><span></span></div>'}
     </div></div></section>
   </div>
-  <div class="note"><b>Lectura de Vincero</b><span>El piloto aprende sobre los jugadores nuevos, los únicos contactables hoy. El valor está en la base anterior a julio: {n(h.atrasado + h.enfriando + h.inactivo)} de esos jugadores están enfriándose, atrasados frente a su ritmo o inactivos hace 31-60 días. Con su teléfono y su consentimiento, las campañas de retención pasan de cientos a miles de jugadores.</span></div>
+  <div class="note"><b>Lectura de Vincero</b><span>El mayor potencial está en {n(h.atrasado + h.enfriando + h.inactivo)} jugadores de la base anterior a julio que se están alejando. Con su teléfono y consentimiento, la retención pasa de cientos a miles de jugadores.</span></div>
 </section>
 
 <section class="view" id="v-datos" data-title="Fuentes de datos">
@@ -1790,12 +1791,12 @@ def construir_html(D):
 </section>
 
 <section class="view" id="v-jugadores" data-title="Jugadores">
-  <div class="vhead"><div><h1>Jugadores</h1><p>Los {n(tot_j)} jugadores que aparecen en algún archivo {periodo_txt}. Cada uno tiene un perfil con más de 100 indicadores al {corte:%d-%m-%Y}; aquí se agrupan por la actividad que tuvieron.</p></div></div>
+  <div class="vhead"><div><h1>Jugadores</h1><p>Quién juega y qué hace, desde el 1-jul.</p></div></div>
   <div class="g g4">
-    {tile('Jugadores', n(tot_j), 'Todos los que aparecen en registros, recargas, apuestas, casino o retiros desde el 1-jul.')}
-    {tile('Recargan y apuestan', n(activos_rec_apu), f"{n(100 * activos_rec_apu / tot_j, 1)} % del total, pero generan casi todo el monto. Con ellos la prioridad es retener: ver su riesgo en Predicción.", acc=True)}
-    {tile('Registrados sin actividad', n(nuevos_sin), f"{n(100 * nuevos_sin / tot_j, 1)} % se registró y nunca recargó ni apostó. Los recientes son la audiencia de ACT01 (0-7 días) y ACT05 (8-30 días).")}
-    {tile('Recargan sin apostar en deportes', n(int(pf[pf.act == 'Solo recarga'].j.sum())), f'Su producto es casino: el {n(pct_sr_cas, 0)} % juega casino. Para ellos, deportes es venta cruzada (XS03), no activación.')}
+    {tile('Jugadores', n(tot_j), 'Con actividad o registro desde el 1-jul', tip="Cada uno tiene un perfil con más de 100 indicadores, disponible en la exportación de la base.")}
+    {tile('Recargan y apuestan', n(activos_rec_apu), f'{n(100 * activos_rec_apu / tot_j, 0)} % · casi todo el monto · <a href="#prediccion">Ver riesgo</a>', acc=True)}
+    {tile('Registrados sin actividad', n(nuevos_sin), f"{n(100 * nuevos_sin / tot_j, 0)} % · audiencia de ACT01 y ACT05", tip="Se registraron y nunca recargaron ni apostaron. ACT01 cubre los primeros 7 días; ACT05, del día 8 al 30.")}
+    {tile('Recargan sin apostar en deportes', n(int(pf[pf.act == 'Solo recarga'].j.sum())), f'{n(pct_sr_cas, 0)} % juega casino · venta cruzada (XS03)')}
   </div>
   <section class="panel"><div class="ph"><h2>Composición por actividad</h2><span class="sub">Jugadores por tipo de actividad, {periodo_txt}</span></div><div class="pb">{f_pf}</div></section>
   <section class="panel"><div class="ph"><h2>Detalle por población y actividad</h2><span class="sub">Totales y medianas por grupo</span></div><div class="pb flush">{t_pf}</div></section>
@@ -1809,41 +1810,41 @@ def construir_html(D):
 </section>
 
 <section class="view" id="v-insights" data-title="Insights">
-  <div class="vhead"><div><h1>Insights</h1><p>Sobre toda la base, {periodo_txt}; se recalculan con cada carga. Cada tarjeta separa el dato observado de su lectura. Los archivos muestran qué pasó; no demuestran por qué.</p></div></div>
+  <div class="vhead"><div><h1>Insights</h1><p>Lo que muestran los datos y qué hacer con cada hallazgo.</p></div></div>
   {insight("Quienes generan el volumen no son quienes podemos contactar", f"{n(pct_apu_hist, 0)} %", "del monto apostado viene de la base sin teléfono",
            f"{n(reg_tot.j)} registrados desde julio traen teléfono; {n(hist.j)} registrados antes solo aparecen en transacciones.",
            f"De los activos de la última semana, {n(rc.sin_datos_contacto.iloc[0])} son de la base histórica y {n(rc.con_datos_contacto.iloc[0])} registrados recientes.",
-           "Registros es un export de altas del periodo, no un maestro de jugadores.",
-           "Solicitar el maestro con teléfono, estado y consentimiento.", f_rc, '<span class="pill crit">Bloqueante</span>')}
+           "Quienes más apuestan son jugadores antiguos de los que no tenemos teléfono.",
+           "Pedir a YAjuego el teléfono y el consentimiento de la base histórica.", f_rc, '<span class="pill crit">Bloqueante</span>')}
   {insight("La activación ocurre en la primera hora o casi nunca", f"{n(pct_24h, 0)} %", "de los que recargan lo hacen en 24 h",
            f"{n(conv_tot, 1)} % de los registrados recargó; {n(pct_1h, 0)} % de ellos en menos de una hora.",
-           f"Quien no recargó al día 7: solo {CF['tasa_act05'][1]} lo hace entre los días 7 y 21 (corte simulado al {fd(t_sim)}).",
-           f"La decisión se toma en el registro. Los verificados por celular depositan {CF['verif_si']} vs {CF['verif_no']} (correlación).",
-           "Carga diaria para enviar ACT01 a las 24-72 h.", f_t1)}
+           f"Quien no recargó al día 7: solo {CF['tasa_act05'][1]} lo hace entre los días 7 y 21. Los que verificaron el celular recargan {CF['verif_si']}, frente a {CF['verif_no']} de los que no.",
+           "La decisión de recargar se toma al registrarse; después del día 7 casi nadie lo hace.",
+           "Enviar ACT01 en las primeras 24-72 h (requiere carga diaria).", f_t1)}
   {insight("La retención temprana es el punto débil", f"{n(ret_ini, 0)} %", f"de los convertidos de {MES_N.get(coh[0], coh[0])} sigue activo en los últimos 30 días",
            f"Conversión a recarga por cohorte: {CF['conv_cohortes']}. {CF['repite']} de los convertidos repite recarga.",
            f"Activos en los últimos 30 días, por cohorte: {ret_txt}.",
            "El jugador nuevo prueba y se va en pocas semanas; la segunda recarga decide si se queda.",
-           "Priorizar ONB02 sobre recuperación tardía.", f_emb)}
+           "Priorizar la segunda recarga (ONB02) sobre recuperar inactivos.", f_emb)}
   {insight(f"{'Casi la mitad' if 40 <= rsa_pct < 50 else 'Una parte importante'} de los nuevos que recargan no apuesta en deportes: juega casino", f"{n(rsa_pct, 0)} %", "de los registrados con recarga no apuesta en deportes",
            f"{n(D['rsa'].sin)} de {n(D['rsa'].con)} registrados con recarga no tienen apuestas deportivas. En toda la base, {n(rsa_m, 0)} % del monto recargado viene de jugadores sin apuestas deportivas.",
            f"Desde el {fd(cas_d0)}, {n(pct_sr_cas, 0)} % de quienes recargan sin apostar en deportes juega casino ({n(hc.sin_dep_cas)} de {n(hc.sin_dep)}).",
            "No son inactivos: su producto es casino. Para ellos, deportes es venta cruzada.",
-           "XS03 como venta cruzada; diferenciar a quien juega casino con frecuencia.", "", '<span class="pill ok">Confirmado con casino</span>')}
+           "Tratar XS03 como venta cruzada y excluir a quien juega casino a diario.", "", '<span class="pill ok">Confirmado con casino</span>')}
   {insight("En vivo mueve el dinero; las combinadas mueven el volumen", CF["vivo_monto"], "del monto en simples en vivo",
            f"Simples en vivo: {CF['vivo_apuestas']} de las apuestas, mediana {CF['vivo_mediana']}. Combinadas prepartido: {CF['comb_apuestas']} de las apuestas, mediana {CF['comb_mediana']} y {CF['comb_sel']} selecciones.",
            f"{n(D['pref'].n.get('prepartido', 0))} jugadores prefieren prepartido y {n(D['pref'].n.get('en_vivo', 0))} en vivo (≥ 5 apuestas). {n(100 * D['bono'].p, 1)} % usa fondos de bono.",
            "Dos perfiles: ticket pequeño con muchas selecciones, y seguimiento del partido con montos mayores.",
-           "Variante de copy por preferencia, sin incentivos.", f_mix)}
+           "Usar la variante de mensaje según preferencia: en vivo o prepartido.", f_mix)}
   {insight("Sábado al mediodía es el pico", n(dow[6]), "apuestas promedio los sábados",
-           f"Lunes: {n(dow[1])} apuestas por día. Pico horario 12-16 h.", "Las recargas siguen el mismo patrón; mínimo entre 2 y 5 h.",
+           f"Lunes: {n(dow[1])} apuestas por día. Pico horario 12-16 h; las recargas siguen el mismo patrón.", "Horario permitido por la Ley 2300 de 2023: lun-vie 7-19 h, sáb 8-15 h.",
            "La actividad sigue el calendario del fútbol de fin de semana.",
-           "Enviar jueves a sábado antes de las 15 h (Ley 2300 de 2023: lun-vie 7-19 h, sáb 8-15 h).", f_hm)}
+           "Enviar de jueves a sábado antes de las 15 h.", f_hm)}
   {insight("La actividad está muy concentrada", f"{n(conc[('Monto apostado', 1)], 0)} %", "del monto apostado en el 1 % de apostadores",
            f"10 % de los apostadores = {n(conc[('Monto apostado', 10)], 0)} % del monto. En recargas: {n(conc[('Monto recargado', 1)], 0)} % y {n(conc[('Monto recargado', 10)], 0)} %.",
            f"Recarga mediana {CF['recarga_mediana']}; p90 de monto recargado por jugador ${n(D['params_base']['valor_p90'])}.",
            "Un grupo pequeño de alta intensidad pesa mucho en cualquier promedio.",
-           "Reportar medianas. No usar el nivel de valor para presionar más recargas.", f_lor)}
+           "Reportar medianas y no presionar más recargas a los de mayor valor.", f_lor)}
   <section class="panel"><div class="ph"><h2>Comparación mensual en base diaria</h2><span class="sub">Promedio por día completo de cada fuente</span></div><div class="pb flush">{t_mes.replace('<div class="tw">', '<div class="tw">', 1)}</div></section>
   <div class="g g2">
     <section class="panel"><div class="ph"><h2>Medios de recarga</h2></div><div class="pb flush">{t_met}</div></section>
@@ -1854,10 +1855,10 @@ def construir_html(D):
 </section>
 
 <section class="view" id="v-segmentos" data-title="Segmentos">
-  <div class="vhead"><div><h1>Segmentos</h1><p>Al corte del {corte:%d-%m-%Y}, con casino incluido en la actividad. Casino entra desde el {fd(cas_d0)}: quien solo jugó casino antes de esa fecha puede aparecer como enfriándose o inactivo. Un segmento de ciclo de vida por jugador, asignado en orden de prioridad. Umbrales derivados de la distribución: 14 días ≈ p85 del intervalo entre días de apuesta.</p></div></div>
-  <section class="panel"><div class="ph"><h2>Ciclo de vida al corte</h2><span class="sub">mart.segmento_jugador</span></div><div class="pb">{f_cv}</div></section>
+  <div class="vhead"><div><h1>Segmentos</h1><p>Un ciclo de vida por jugador, al {corte:%d-%m-%Y}.{info(f"Se asigna en orden de prioridad. 14 días ≈ intervalo habitual entre apuestas (p85). Casino entra desde el {fd(cas_d0)}: quien solo jugó casino antes puede verse inactivo.")}</p></div></div>
+  <section class="panel"><div class="ph"><h2>Ciclo de vida</h2></div><div class="pb">{f_cv}</div></section>
   <section class="panel"><div class="ph"><h2>Catálogo de segmentos</h2></div><div class="pb flush">{t_seg}</div></section>
-  <section class="panel"><div class="ph"><h2>Etiquetas (hipersegmentos)</h2><span class="sub">Se superponen; la campaña resuelve la prioridad</span></div><div class="pb flush">{t_hip}</div></section>
+  <section class="panel"><div class="ph"><h2>Etiquetas</h2><span class="sub">Un jugador puede tener varias</span></div><div class="pb flush">{t_hip}</div></section>
   <div class="g g2">
     <div class="note"><b>Protección de juego responsable</b><span>Sale de toda campaña promocional quien tenga {int(P['rec_max_dia_p99'])}+ recargas en un día (p99), ≥ 50 % de recargas de madrugada, o una escalada de monto ≥ 3× sobre el p90. La caída de frecuencia no se usa para reactivar y los retiros no son disparadores.</span></div>
     <div class="note"><b>Contactabilidad</b><span>Solo es contactable quien está en Registros, con cuenta en estado 1, teléfono válido no compartido y edad ≥ 18. Toda audiencia queda bloqueada hasta cruzar consentimiento y autoexclusión.</span></div>
@@ -1867,7 +1868,7 @@ def construir_html(D):
 {pred_html}
 
 <section class="view" id="v-audiencias" data-title="Constructor de audiencias">
-  <div class="vhead"><div><h1>Constructor de audiencias</h1><p>Combina segmento, nivel de valor, preferencia y predicción para dimensionar una audiencia antes de crear una campaña. Los conteos son reales al corte.</p></div>
+  <div class="vhead"><div><h1>Constructor de audiencias</h1><p>Arma una audiencia y mira cuántos jugadores alcanza antes de lanzar.</p></div>
     <button type="button" class="btn" id="ab-reset">Restablecer filtros</button></div>
   <div class="g g-73" id="builder">
     <section class="panel"><div class="ph"><h2>Filtros</h2></div><div class="pb">
@@ -1896,25 +1897,24 @@ def construir_html(D):
 </section>
 
 <section class="view" id="v-octubre" data-title="Tendencias y casino">
-  <div class="vhead"><div><h1>Tendencias y casino</h1><p>Evolución semanal de toda la base, {periodo_txt}, y el detalle de casino. Cada semana usa solo los días que cada producto tiene completos.</p></div></div>
-  <section class="panel"><div class="ph"><h2>Promedio por día, semana a semana</h2><span class="sub">Montos apostados y recargados; no equivalen a ingresos</span></div><div class="pb">{f_sem}</div></section>
-  <section class="panel"><div class="ph"><h2>Detalle por semana</h2><span class="sub">La más reciente primero</span></div><div class="pb flush">{t_pd}</div>
-    <div class="pb small muted">Cada valor es el promedio por día de la semana, contando solo los días con archivo completo de ese producto; si faltan días, se indica cuántos se usaron. Las semanas con festivo no son del todo comparables con una semana normal. Casino existe desde el {fd(cas_d0)}.</div></section>
+  <div class="vhead"><div><h1>Tendencias y casino</h1><p>Cómo evoluciona la actividad semana a semana y qué pasa en casino.</p></div></div>
+  <section class="panel"><div class="ph"><h2>Promedio diario por semana</h2>{info("Promedio por día con datos completos de cada producto. Montos apostados y recargados; no son ingresos.")}</div><div class="pb">{f_sem}</div></section>
+  <section class="panel"><div class="ph"><h2>Detalle por semana</h2><span class="sub">La más reciente primero</span></div><div class="pb flush">{t_pd}</div></section>
   <div class="g g4">
-    {tile('Rondas de casino', n(cas.rondas), f"Jugadas de {n(cas.jug)} jugadores en {n(cas.juegos)} juegos distintos desde el {fd(cas_d0)}.")}
-    {tile('Apostado en casino', mm(cas.ap), f"En los días con datos de ambos productos, casino movió {n(cas_mismos / dep_mismos, 1)} veces lo que movió deportes. Es el producto principal de buena parte de la base.", acc=True)}
-    {tile('Premios pagados en casino', mm(cas.pg), f"La diferencia con lo apostado es {mm(cas.ap - cas.pg)} ({n(100 * (cas.ap - cas.pg) / cas.ap, 1)} %). No es la ganancia de YAjuego: no descuenta bonos, impuestos ni costos.")}
-    {tile('Concentración en casino', f"{n(D['cas_top'].t1, 0)}<small> %</small>", f"del monto lo apuesta el 1 % de los jugadores; el 10 % más activo, el {n(D['cas_top'].t10, 0)} %. Pocos jugadores mueven el promedio: conviene mirar medianas.")}
+    {tile('Rondas de casino', n(cas.rondas), f"{n(cas.jug)} jugadores · {n(cas.juegos)} juegos")}
+    {tile('Apostado en casino', mm(cas.ap), f"{n(cas_mismos / dep_mismos, 1)} veces lo de deportes", acc=True, tip="Comparación en los días con datos completos de ambos productos.")}
+    {tile('Premios pagados', mm(cas.pg), f"{n(100 * (cas.ap - cas.pg) / cas.ap, 1)} % menos que lo apostado", tip="No es la ganancia de YAjuego: no descuenta bonos, impuestos ni costos.")}
+    {tile('Concentración', f"{n(D['cas_top'].t1, 0)}<small> %</small>", f"del monto en el 1 % de jugadores", tip=f"El 10 % más activo concentra el {n(D['cas_top'].t10, 0)} %. Pocos jugadores mueven el promedio: usa medianas.")}
   </div>
   {insight("Quien recarga y no apuesta en deportes juega casino", f"{n(pct_sr_cas, 0)} %", f"de quienes recargan sin apostar en deportes juega casino",
            f"Desde el {fd(cas_d0)}, {n(hc.recargan)} jugadores recargaron; {n(hc.sin_dep)} no apostaron en deportes y {n(hc.sin_dep_cas)} de ellos jugaron casino. Otros {n(hc.dep_cas)} juegan ambos productos.",
            f"{cas_txt}; se mide solo en días con datos de casino.",
-           "Ese grupo no es inactivo: juega casino. XS03 debe tratarlo como venta cruzada a deportes, no como activación.",
-           "Excluir o diferenciar en XS03 a quien juega casino con frecuencia.", "", f'<span class="pill ok">Validado con {dias_cas} días</span>')}
+           "No son inactivos: juegan casino. Deportes es venta cruzada.",
+           "En XS03, excluir o diferenciar a quien juega casino a diario.", "", f'<span class="pill ok">Validado con {dias_cas} días</span>')}
   <div class="g g2">
     <section class="panel"><div class="ph"><h2>Proveedores de casino</h2><span class="sub">% del monto apostado · {cas_txt}</span></div><div class="pb">{f_cas_prov}</div></section>
     <section class="panel"><div class="ph"><h2>Rondas de casino por hora</h2><span class="sub">{cas_txt} · hora del archivo</span></div><div class="pb">{f_cas_hora}
-      <p class="small muted">El casino tiene actividad alta de madrugada y de noche, a diferencia de deportes (pico a mediodía). Es un dato a vigilar en las señales de juego responsable.</p></div></section>
+      <p class="small muted">Pico de noche y madrugada, al revés que deportes: vigilar en las señales de juego responsable.</p></div></section>
   </div>
   <section class="panel"><div class="ph"><h2>¿Quién juega casino?</h2></div><div class="pb flush"><div class="list">
     <div class="li"><span class="ic warn">{n(100 * cb.get('Base anterior a julio', 0) / cas.jug, 0)}%</span><div><b>{n(cb.get('Base anterior a julio', 0))} de la base anterior a julio</b><span>Sin teléfono en los archivos recibidos.</span></div><span></span></div>
@@ -1925,7 +1925,7 @@ def construir_html(D):
 {vistas_activacion}
 
 <section class="view" id="v-ajustes" data-title="Pendientes">
-  <div class="vhead"><div><h1>Pendientes de YAjuego</h1><p>Lo que necesitamos para enviar la primera ola, para llegar a más jugadores y para afinar los segmentos.</p></div></div>
+  <div class="vhead"><div><h1>Pendientes de YAjuego</h1><p>Lo que falta para enviar, llegar a más jugadores y afinar los segmentos.</p></div></div>
   <div class="g g3">
     {tile('Bloquean el envío', str(len(PEND['envio'])), 'Sin esto ninguna campaña sale', acc=True)}
     {tile('Amplían el alcance', str(len(PEND['alcance'])), 'Más jugadores y campañas a tiempo')}
