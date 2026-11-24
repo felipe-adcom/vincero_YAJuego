@@ -14,7 +14,7 @@ data/raw/          originales intactos (no versionados: contienen datos personal
 data/warehouse/    yajuego.duckdb: stg, core, mart (al corte) y meta (manifiesto, controles, cobertura por día)
 data/exports/      perfil por jugador, audiencias SMS y libro Excel (no versionados)
 sql/               transformación, perfil por jugador, segmentos y audiencias
-pipeline/          ingesta, orquestador, controles, exportes, análisis, diccionario y app
+pipeline/          ingesta, orquestador, controles, modelos predictivos, exportes, análisis, diccionario y app
 campanas/          copies SMS por campaña y variante
 reports/           salidas agregadas y app (no versionadas); assets/ con la marca Vincero
 tests/             prueba de la ingesta con archivos sintéticos
@@ -24,7 +24,7 @@ docs/              arquitectura y modelo
 ## Ejecutar
 
 ```bash
-pip install duckdb pandas python-calamine openpyxl matplotlib
+pip install duckdb pandas python-calamine openpyxl matplotlib scikit-learn
 cp /ruta/a/los/excel/*.xlsx data/raw/          # sin renombrar: la fuente se reconoce por las columnas
 python pipeline/run.py                          # ingesta + reconstrucción + controles + exportes + app
 python pipeline/run.py --corte "2026-11-30 23:59:59"   # fijar otra fecha de corte
@@ -60,3 +60,4 @@ diario que empieza después de la 01:00 o termina antes de las 23:00 se marca co
 | Controles de conciliación entre capas y audiencias | Medición del efecto incremental por ola |
 | Verificador de codificación y longitud de SMS (GSM-7) | |
 | Aplicación Vincero (HTML autocontenido, solo agregados) | |
+| Regresión logística de abandono (30 días) y activación (14 días), con validación temporal | Medir el efecto del SMS por banda de probabilidad (uplift) |

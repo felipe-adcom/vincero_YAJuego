@@ -333,8 +333,18 @@ def cargar_app(D):
     D["cubo"] = con.execute("""
         SELECT s.ciclo_vida AS cv, s.nivel_valor AS nv, s.pref_modalidad AS pm,
                s.estado_contacto AS ec, s.senal_revision_juego_responsable::INT AS jr,
-               j.en_registros::INT AS reg, count(*) AS n
+               j.en_registros::INT AS reg, coalesce(p.modelo || '_' || p.banda, 'sin_prediccion') AS pr, count(*) AS n
         FROM mart.segmento_jugador s JOIN mart.jugador_resumen j USING (player_id)
+        LEFT JOIN (SELECT * FROM mart.prediccion_jugador   -- quien cae en ambos modelos queda con activación
+                   QUALIFY row_number() OVER (PARTITION BY player_id ORDER BY (modelo = 'activacion') DESC) = 1) p USING (player_id)
+        GROUP BY ALL""").df()
+    # Predicción: métricas de validación y pronóstico por segmento al corte.
+    D["pred"] = json.loads((REPORT_DIR / "prediccion.json").read_text(encoding="utf-8"))
+    D["pred_seg"] = con.execute("""
+        SELECT p.modelo, s.ciclo_vida, j.en_registros reg, p.banda, count(*) n, sum(p.probabilidad) esperado,
+               sum(p.probabilidad * (1 - p.probabilidad)) var,
+               sum((s.estado_contacto = 'contactable_pendiente_consentimiento' AND NOT s.senal_revision_juego_responsable)::INT) contactables
+        FROM mart.prediccion_jugador p JOIN mart.segmento_jugador s USING (player_id) JOIN mart.jugador_resumen j USING (player_id)
         GROUP BY ALL""").df()
     D["ctrl"] = con.execute("SELECT control, esperado, obtenido, estado, nota FROM meta.controles").df()
     D["perfil"] = con.execute("""
@@ -973,7 +983,7 @@ JS = r"""
   const cubo = DATA.cubo;
   const fmt = n => n.toLocaleString('es-CO');
   const total = cubo.reduce((s, r) => s + r.n, 0);
-  const dims = ['cv', 'nv', 'pm'];
+  const dims = ['cv', 'nv', 'pm', 'pr'];
   function sel(dim){ return [...document.querySelectorAll(`[data-dim="${dim}"]:checked`)].map(i => i.value); }
   function calc(){
     const S = Object.fromEntries(dims.map(d => [d, new Set(sel(d))]));
@@ -1056,6 +1066,10 @@ NOMBRES_CV = {"1_nuevo_sin_actividad": "Nuevo sin actividad", "2_nuevo_en_activa
               "5_inactivo_31_60": "Inactivo 31-60 días", "6_inactivo_61_mas": "Inactivo 61+ días",
               "7_sin_actividad_de_juego_observada": "Sin juego observado"}
 NOMBRES_NV = {"sin_recarga": "Sin recarga", "bajo": "Bajo (< p50)", "medio": "Medio (p50-p90)", "alto": "Alto (≥ p90)"}
+NOMBRES_PR = {"abandono_alta": "Riesgo de abandono alto", "abandono_media": "Riesgo de abandono medio",
+              "abandono_baja": "Riesgo de abandono bajo", "activacion_alta": "Prob. de activarse alta",
+              "activacion_media": "Prob. de activarse media", "activacion_baja": "Prob. de activarse baja",
+              "sin_prediccion": "Sin predicción"}
 NOMBRES_PM = {"insuficiente": "Menos de 5 apuestas", "prepartido": "Prepartido", "en_vivo": "En vivo", "mixto": "Mixto"}
 
 
@@ -1353,6 +1367,7 @@ def construir_html(D):
     ck_cv = checks("cv", NOMBRES_CV, list(NOMBRES_CV))
     ck_nv = checks("nv", NOMBRES_NV, ["sin_recarga", "bajo", "medio", "alto"])
     ck_pm = checks("pm", NOMBRES_PM, ["insuficiente", "prepartido", "en_vivo", "mixto"])
+    ck_pr = checks("pr", NOMBRES_PR, list(NOMBRES_PR))
 
     # ---------- campañas ----------
     BASE = {
@@ -1509,9 +1524,78 @@ def construir_html(D):
                       f'<div class="pb flush"><div class="tw"><table class="wide"><thead><tr><th>Pendiente</th><th>Por qué importa</th>'
                       f'<th>Responsable</th><th>Estado</th></tr></thead><tbody>{filas_p}</tbody></table></div></div></section>\n  ')
 
+    # ---------- predicción (regresión logística) ----------
+    PRED_TXT = {
+        "abandono": dict(titulo="Abandono en los próximos 30 días", pob="jugadores con recarga o apuesta en los últimos 30 días",
+                         evento="dejarían de recargar y de apostar", corto="abandonos", banda="Riesgo alto",
+                         uso="Riesgo alto y contactable: prioridad para RET04, antes de que se enfríe. Riesgo alto sin teléfono: es la base histórica que hoy no podemos contactar."),
+        "activacion": dict(titulo="Primera recarga en los próximos 14 días", pob="registrados en los últimos 30 días que todavía no recargan",
+                           evento="harían su primera recarga", corto="primeras recargas", banda="Probabilidad alta",
+                           uso="Probabilidad alta: ACT01 y ACT05 tienen más opción de convertir. Probabilidad baja: el SMS difícilmente paga su costo; conviene medirlo antes de escalar."),
+    }
+
+    def fmt_val(x, unidad):
+        if unidad == "$":
+            return cop(round(x, -3) if x >= 10000 else x)
+        if unidad == "%":
+            return f"{n(100 * x, 0)} %"
+        return f"{n(x)} {unidad}"
+
+    def frase(f):
+        o = f["odds"]
+        efecto = (f"multiplica la probabilidad por {n(o, 1)}" if o >= 1 else f"divide la probabilidad por {n(1 / o, 1)}")
+        if f["binaria"]:
+            return f"<b>{esc(f['nombre'].capitalize())}</b><span>{efecto.capitalize()}.</span>"
+        return f"<b>{esc(f['nombre'].capitalize())}</b><span>Pasar de {fmt_val(f['desde'], f['unidad'])} a {fmt_val(f['hasta'], f['unidad'])} {efecto}.</span>"
+
+    pred_html = ""
+    for m in D["pred"]:
+        k = m["modelo"]
+        tx = PRED_TXT[k]
+        ps = D["pred_seg"][D["pred_seg"].modelo == k]
+        tot, esp = int(ps.n.sum()), float(ps.esperado.sum())
+        ic = 1.96 * math.sqrt(float(ps["var"].sum()))
+        alta = ps[ps.banda == "alta"]
+        seg = ps.groupby("ciclo_vida").agg(n=("n", "sum"), esp=("esperado", "sum")).reset_index()
+        alta_seg = alta.groupby("ciclo_vida").agg(na=("n", "sum"), ca=("contactables", "sum")).reset_index()
+        seg = seg.merge(alta_seg, on="ciclo_vida", how="left").fillna(0).sort_values("n", ascending=False)
+        filas = [dict(s=f"<strong>{NOMBRES_CV.get(r.ciclo_vida, r.ciclo_vida)}</strong>", n=n(r.n), e=n(r.esp), p=f"{n(100 * r.esp / r.n, 1)} %",
+                      a=n(r.na), c=n(r.ca)) for r in seg.itertuples()]
+        t_seg_p = table(pd.DataFrame(filas), [("s", "Segmento"), ("n", "Jugadores"), ("e", "Esperados"), ("p", "Probabilidad media"),
+                                              ("a", tx["banda"]), ("c", f"{tx['banda']} y contactables")], num=("n", "e", "p", "a", "c"))
+        cal = pd.DataFrame(m["calibracion"])
+        f_cal = bars_v([f"{i + 1}" for i in cal.index], [("Probabilidad predicha", list(100 * cal.pred), "--s1"),
+                                                         ("Lo que pasó", list(100 * cal.real), "--s2")],
+                       fmt=lambda v: f"{n(v, 1)} %" if v < 10 else f"{n(v, 0)} %", h=240, labels=False,
+                       sub=["menos" if i == 0 else ("más" if i == len(cal) - 1 else "") for i in cal.index])
+        fac = "".join(f'<div class="li"><span class="ic {"crit" if (f["odds"] > 1) == (k == "abandono") else "ok"}">{"↑" if f["odds"] > 1 else "↓"}</span><div>{frase(f)}</div><span></span></div>'
+                      for f in m["factores"][:6])
+        pred_html += f"""
+  <section class="panel"><div class="ph"><h2>{tx['titulo']}</h2><span class="sub">{n(tot)} {tx['pob']}</span></div><div class="pb">
+    <div class="g g4">
+      {tile('Pronóstico', n(esp), f"{tx['evento']}: {n(100 * esp / tot, 0)} % de los {n(tot)}", acc=True)}
+      {tile(tx['banda'], n(int(alta.n.sum())), f"{n(int(alta.contactables.sum()))} contactables · el 20 % con mayor probabilidad")}
+      {tile('Qué tan bien ordena', f"{n(100 * m['captura_top20'], 0)}<small> %</small>", f"de los {tx['corto']} reales cayó en el 20 % que el modelo marcó más alto")}
+      {tile('Acierto (AUC)', n(m['auc'], 2), "1 = perfecto · 0,5 = azar · desde 0,8 es bueno")}
+    </div>
+    <div class="g g2">
+      <div><h3 style="margin-bottom:8px">Qué pesa más</h3><div class="list">{fac}</div>
+        <p class="small muted" style="margin-top:8px">Efecto de cada factor manteniendo los demás iguales. Muestra asociación, no causa.</p></div>
+      <div><h3 style="margin-bottom:8px">¿Acierta? Predicho frente a lo que pasó</h3>{f_cal}
+        <p class="small muted">Jugadores ordenados de menor a mayor probabilidad, en 10 grupos iguales. Prueba con {n(m['n_validacion'])} jugadores al {pd.Timestamp(m['t_validacion']):%d-%m} que el modelo no vio al entrenar.</p></div>
+    </div>
+    {t_seg_p}
+    <div class="note"><b>Cómo usarlo</b><span>{tx['uso']}</span></div>
+  </div></section>"""
+    pred_html = f"""<section class="view" id="v-prediccion" data-title="Predicción">
+  <div class="vhead"><div><h1>Predicción</h1><p>Dos modelos de regresión logística, reentrenados con toda la base en cada carga. Estiman la probabilidad de cada jugador a partir de su comportamiento hasta el {corte:%d-%m-%Y}: no garantizan lo que hará ni miden el efecto de un SMS; eso lo dicen los grupos de control.</p></div></div>
+  {pred_html}
+  <div class="note"><b>Cómo se construyen</b><span>Se toma la foto de cada jugador en cortes semanales pasados y se mira qué hizo después. El modelo aprende de esos casos y se prueba en el corte más reciente, que no vio. Solo usa información conocida en cada fecha: los campos de Registros que son una foto del día de la exportación (saldo, depositante, último login) quedan fuera. Casino todavía no entra: existe desde el {fd(cas_d0)} y no alcanza para entrenar. Los huecos de datos (por ejemplo, el {sin_txt or '—'}) restan precisión.</span></div>
+</section>
+"""
     nav = [("Operación", [("inicio", "home", "Inicio", ""), ("datos", "db", "Fuentes de datos", str(int((D['manifiesto'].estado == 'cargado').sum()))),
                           ("modelo", "model", "Modelo", ""), ("diccionario", "book", "Diccionario", str(len(D['dicc'])))]),
-           ("Clientes", [("jugadores", "users", "Jugadores", n(D['universo_base'])), ("insights", "spark", "Insights", "7"), ("segmentos", "users", "Segmentos", "7"), ("audiencias", "filter", "Constructor", "")]),
+           ("Clientes", [("jugadores", "users", "Jugadores", n(D['universo_base'])), ("insights", "spark", "Insights", "7"), ("segmentos", "users", "Segmentos", "7"), ("prediccion", "gauge", "Predicción", "2"), ("audiencias", "filter", "Constructor", "")]),
            ("Seguimiento", [("octubre", "spark", "Tendencias y casino", "")]),
            ("Activación", [("campanas", "send", "Campañas SMS", "6"), ("medicion", "gauge", "Medición", ""), ("plan", "map", "Plan", "")]),
            ("Cuenta", [("ajustes", "cog", "Pendientes", str(n_pend))])]
@@ -1718,8 +1802,10 @@ def construir_html(D):
   </div>
 </section>
 
+{pred_html}
+
 <section class="view" id="v-audiencias" data-title="Constructor de audiencias">
-  <div class="vhead"><div><h1>Constructor de audiencias</h1><p>Combina segmento, nivel de valor y preferencia para dimensionar una audiencia antes de crear una campaña. Los conteos son reales al corte.</p></div>
+  <div class="vhead"><div><h1>Constructor de audiencias</h1><p>Combina segmento, nivel de valor, preferencia y predicción para dimensionar una audiencia antes de crear una campaña. Los conteos son reales al corte.</p></div>
     <button type="button" class="btn" id="ab-reset">Restablecer filtros</button></div>
   <div class="g g-73" id="builder">
     <section class="panel"><div class="ph"><h2>Filtros</h2></div><div class="pb">
@@ -1728,6 +1814,7 @@ def construir_html(D):
         <div class="fgroup"><h4>Nivel de valor</h4><div class="checks">{ck_nv}</div></div>
         <div class="fgroup"><h4>Preferencia deportiva</h4><div class="checks">{ck_pm}</div></div>
       </div>
+      <div class="fgroup"><h4>Predicción</h4><div class="checks" style="grid-template-columns:repeat(auto-fill,minmax(230px,1fr))">{ck_pr}</div></div>
       <div class="fgroup"><h4>Exclusiones</h4><div class="checks">
         <label><input type="checkbox" id="f-cont" checked> Solo contactables con los datos disponibles</label>
         <label><input type="checkbox" id="f-jr" checked> Excluir señales de juego responsable</label></div></div>

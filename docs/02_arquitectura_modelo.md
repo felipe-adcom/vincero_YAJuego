@@ -113,6 +113,24 @@ archivo no hacen parecer que cayó la actividad.
 Las tasas de respuesta sin SMS de cada campaña se miden con un corte simulado 30 días antes del corte:
 qué hizo cada grupo equivalente en los días siguientes, sin ningún mensaje.
 
+## Modelos predictivos
+
+`pipeline/prediccion.py` entrena dos regresiones logísticas en cada carga:
+
+| Modelo | Población al corte | Evento | Ventana |
+|---|---|---|---|
+| Abandono | Recarga o apuesta en los últimos 30 días | Ninguna recarga ni apuesta | 30 días |
+| Activación | Registrados en los últimos 30 días sin recarga | Primera recarga | 14 días |
+
+- Se arman cortes simulados semanales: variables con datos hasta T, resultado en (T, T + ventana].
+- Validación temporal: se entrena con los cortes cuyo resultado cierra antes del último corte y se evalúa
+  en ese último corte (AUC, captura del 20 % superior, calibración por deciles).
+- El modelo final usa todos los cortes y su nivel se ajusta a la tasa del periodo más reciente.
+- No se usan campos de Registros que son una foto del día de la exportación (depositante, saldo,
+  último login, KYC): filtrarían el futuro.
+- Salidas: `mart.prediccion_jugador` (probabilidad y banda alta/media/baja por jugador),
+  `mart.prediccion_metricas` y `reports/prediccion.json`.
+
 ## Archivos diarios y casino
 
 - Desde octubre llegan archivos de un solo día por fuente. Su periodo se lee del contenido.

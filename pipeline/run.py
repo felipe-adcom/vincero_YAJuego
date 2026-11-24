@@ -15,6 +15,7 @@ import duckdb
 sys.path.insert(0, str(Path(__file__).parent))
 import config  # noqa: E402
 import cobertura  # noqa: E402
+import prediccion  # noqa: E402
 from controles import ejecutar_controles  # noqa: E402
 from exportar import exportar  # noqa: E402
 from ingest import ingest  # noqa: E402
@@ -52,6 +53,7 @@ def main():
     print(f"[ok] corte: {corte}")
     construir(con, corte, args.inicio)
     fallas = ejecutar_controles(con)
+    prediccion.ejecutar(con, corte, args.inicio)
     exportar(con)
     verificar_sms()
     if not args.sin_reporte:
