@@ -710,8 +710,10 @@ ICON = {  # trazos simples, 16x16
 # Módulos que existen en el código pero no se muestran en la app del cliente.
 # Modelo y Diccionario son documentación técnica (docs/ y reports/diccionario_datos.csv);
 # Plan era un cronograma, no una función del software.
-MODULOS_OCULTOS = {"modelo", "diccionario", "plan"}
-REDIRIGIR = {"plan": "campanas", "modelo": "datos", "diccionario": "datos"}
+# Fuentes de datos (manifiesto y controles) es de uso interno: los controles siguen corriendo y se ven en reports/controles.csv.
+MODULOS_OCULTOS = {"modelo", "diccionario", "plan", "datos"}
+# None: el enlace "Ver" se quita en lugar de llevar a otro módulo.
+REDIRIGIR = {"plan": "campanas", "modelo": None, "diccionario": None, "datos": None}
 
 
 def ocultar_modulos(html_txt):
@@ -721,7 +723,10 @@ def ocultar_modulos(html_txt):
         if i >= 0:
             j = min(x for x in (html_txt.find('<section class="view"', i + 10), html_txt.find("</main>", i)) if x > 0)
             html_txt = html_txt[:i] + html_txt[j:]
-        html_txt = html_txt.replace(f'href="#{k}"', f'href="#{REDIRIGIR[k]}"')
+        if REDIRIGIR[k]:
+            html_txt = html_txt.replace(f'href="#{k}"', f'href="#{REDIRIGIR[k]}"')
+        else:
+            html_txt = re.sub(rf'<a class="btn" href="#{k}">[^<]*</a>', '<span></span>', html_txt)
     return html_txt
 
 
@@ -989,6 +994,7 @@ JS = r"""
 
   // Controles con filtro
   const cb = document.getElementById('ctrl-body');
+  if (cb) {
   function renderCtrl(f){
     const rows = DATA.ctrl.filter(r => f === 'todos' || r.estado === f);
     const cls = {OK: 'ok', FALLA: 'crit', INFO: 'neu'};
@@ -999,6 +1005,7 @@ JS = r"""
     renderCtrl(b.dataset.f);
   }));
   renderCtrl('todos');
+  }
 })();
 """
 NOMBRES_CV = {"1_nuevo_sin_actividad": "Nuevo sin actividad", "2_nuevo_en_activacion": "Nuevo en activación",
@@ -1442,7 +1449,7 @@ def construir_html(D):
     data_json = json.dumps({
         "cubo": D["cubo"].to_dict(orient="records"),
         "dicc": [] if "diccionario" in MODULOS_OCULTOS else D["dicc"][["tabla", "campo", "tipo", "definicion", "origen", "formula"]].to_dict(orient="records"),
-        "ctrl": D["ctrl"].fillna("").astype(str).to_dict(orient="records"),
+        "ctrl": [] if "datos" in MODULOS_OCULTOS else D["ctrl"].fillna("").astype(str).to_dict(orient="records"),
         "camps": camps_js,
     }, ensure_ascii=False).replace("</", "<\\/")
 
@@ -1691,8 +1698,6 @@ def construir_html(D):
 
 <section class="view" id="v-octubre" data-title="Seguimiento y casino">
   <div class="vhead"><div><h1>Seguimiento y casino</h1><p>Datos de octubre y noviembre: {dias_txt_corto}. Alimentan segmentos y audiencias al corte del {corte:%d-%m-%Y}; aquí se comparan con la foto base de jul-sep.</p></div></div>
-  <section class="panel"><div class="ph"><h2>Cobertura desde el {fd(rango[0])}</h2><span class="sub"><span class="pill ok">filas · completo</span> <span class="pill crit">parcial</span> <span class="pill neu">sin archivo</span></span></div><div class="pb flush"><div class="tw"><table class="wide"><thead><tr><th>Días</th><th>Registros</th><th>Recargas</th><th>Apuestas deportivas</th><th>Casino</th><th>Retiros</th></tr></thead><tbody>{post_rows}</tbody></table></div></div>
-    <div class="pb small muted">Los días seguidos con la misma cobertura se agrupan. Octubre del 1 al 25 llegó en archivos por rango; desde el 26-oct, en archivos diarios (casino desde el {fd(cas_d0)}). Un archivo parcial viene de una vista de lista (PayIns, PayOuts, Clients_List, Bet) que exporta un máximo de filas: solo trae las últimas horas del día. Dos archivos recibidos no se cargaron: el de deportes del 11-nov traía rondas de casino ya incluidas en el archivo de casino, y el de deportes del 13-nov traía datos del 17-nov de 00:00 a 08:50.</div></section>
   <div class="g g4">
     {tile('Rondas de casino', n(cas.rondas), f"{n(cas.jug)} jugadores · {n(cas.juegos)} juegos")}
     {tile('Apostado en casino', mm(cas.ap), f"Deportes en los mismos días: {mm(dep_mismos)}", acc=True)}
