@@ -1453,17 +1453,51 @@ def construir_html(D):
         "camps": camps_js,
     }, ensure_ascii=False).replace("</", "<\\/")
 
+    pend = int(cam.seleccionados.sum())
+
+    # Pendientes de YAjuego: (qué, por qué importa, responsable, estado)
+    hist_pot = int(h.atrasado + h.enfriando + h.inactivo)
+    PEND = {
+        "envio": [
+            ("Lista de supresión: consentimiento y autoexclusión", "Ninguna audiencia se activa sin cruzarla.", "Cumplimiento", "crit"),
+            ("Validación legal del texto y del horario", '"+18. Juega responsable.", opción de baja y horario de la Ley 2300 de 2023.', "Legal", "crit"),
+            ("Enlaces de destino y acortador", "Cada SMS lleva a recargas, a la guía o a deportes; hoy usamos un enlace de ejemplo.", "CRM", "crit"),
+            ("Proveedor y tarifa por SMS", "Sin tarifa no se calcula el costo por acción adicional.", "Mercadeo", "crit"),
+        ],
+        "alcance": [
+            ("Teléfono y consentimiento de la base anterior a julio",
+             f"{n(hist.j)} jugadores generan el {n(pct_apu_hist, 0)} % del monto apostado; {n(hist_pot)} están enfriándose o inactivos y hoy no se pueden contactar.",
+             "CRM · Tecnología", "crit"),
+            ("Carga diaria automática", "ACT01 funciona si el SMS sale a las 24 h del registro.", "Tecnología", "warn"),
+        ],
+        "precision": [
+            ("Casino del 1 al 27 de octubre", "Quien solo jugó casino esos días puede aparecer como inactivo.", "Tecnología", "warn"),
+            ("Días faltantes", ("Sin ningún archivo: " + sin_txt + ". " if sin_txt else "") + "Sin apuestas deportivas el 11 y el 13 de noviembre.", "Tecnología", "warn"),
+            ("Diccionario de códigos", "Estado de cuenta (hoy solo 1 = activa), KYC, apuestas Live = 2 y zona horaria.", "Tecnología", "neu"),
+            ("Medios de pago vigentes", "Los SMS mencionan YAJUEGO PAGOS, PSE y Bre-B.", "Mercadeo", "neu"),
+        ],
+    }
+    n_pend = sum(len(v) for v in PEND.values())
+    EST = {"crit": ("crit", "Pendiente · bloquea"), "warn": ("warn", "Pendiente"), "neu": ("neu", "Por confirmar")}
+    TIT = {"envio": "Bloquean el envío", "alcance": "Amplían el alcance", "precision": "Afinan los segmentos"}
+    pend_html = ""
+    for g, items in PEND.items():
+        filas_p = "".join(f'<tr><td><b>{esc(q)}</b></td><td>{esc(pq)}</td><td class="small muted">{esc(r)}</td>'
+                          f'<td><span class="pill {EST[e][0]}">{EST[e][1]}</span></td></tr>' for q, pq, r, e in items)
+        pend_html += (f'<section class="panel"><div class="ph"><h2>{TIT[g]}</h2><span class="sub">{len(items)}</span></div>'
+                      f'<div class="pb flush"><div class="tw"><table class="wide"><thead><tr><th>Pendiente</th><th>Por qué importa</th>'
+                      f'<th>Responsable</th><th>Estado</th></tr></thead><tbody>{filas_p}</tbody></table></div></div></section>\n  ')
+
     nav = [("Operación", [("inicio", "home", "Inicio", ""), ("datos", "db", "Fuentes de datos", str(int((D['manifiesto'].estado == 'cargado').sum()))),
                           ("modelo", "model", "Modelo", ""), ("diccionario", "book", "Diccionario", str(len(D['dicc'])))]),
            ("Clientes", [("jugadores", "users", "Jugadores", n(D['universo_base'])), ("insights", "spark", "Insights", "7"), ("segmentos", "users", "Segmentos", "7"), ("audiencias", "filter", "Constructor", "")]),
            ("Seguimiento", [("octubre", "spark", "Seguimiento y casino", str(len(dias_post)) + " días")]),
            ("Activación", [("campanas", "send", "Campañas SMS", "6"), ("medicion", "gauge", "Medición", ""), ("plan", "map", "Plan", "")]),
-           ("Cuenta", [("ajustes", "cog", "Supuestos y riesgos", "")])]
+           ("Cuenta", [("ajustes", "cog", "Pendientes", str(n_pend))])]
     nav_html = "".join(f'<div class="grp">{g}</div>' + "".join(
         f'<a href="#{k}">{icon(ic)}<span>{lbl}</span>{f"<span class=badge>{b}</span>" if b else ""}</a>' for k, ic, lbl, b in its if k not in MODULOS_OCULTOS)
         for g, its in nav)
 
-    pend = int(cam.seleccionados.sum())
     body = f"""<title>Vincero · YAjuego</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <link rel="icon" href="data:image/png;base64,{mark_b}">
@@ -1476,7 +1510,7 @@ def construir_html(D):
   <div class="ws"><small>Espacio de trabajo</small><b>YAjuego · CRM SMS</b><span>Corte {corte:%d-%m-%Y} · reglas v1.0</span></div>
   <nav class="nav" aria-label="Módulos">{nav_html}</nav>
   <div class="side-foot">
-    <div class="row"><span class="led"></span>Pipeline: {n_ctrl} controles, {fallas} fallas</div>
+    <div class="row"><span class="led{'' if not fallas else ' w'}"></span>{'Datos verificados' if not fallas else f'{fallas} diferencias en los datos'}</div>
     <div class="row"><span class="led w"></span>Audiencias pendientes de validación</div>
     <div class="row mono">Generado {pd.Timestamp.today():%d-%m-%Y}</div>
   </div>
@@ -1487,7 +1521,7 @@ def construir_html(D):
     <div class="status">
       <span class="chip ok">Datos hasta {ultimo:%d-%m-%Y}</span>
       <span class="chip warn">Segmentos y campañas al {corte:%d-%m-%Y}</span>
-      <span class="chip ok">{n_ctrl} controles · {fallas} fallas</span>
+      <span class="chip {'ok' if not fallas else 'crit'}" title="{n_ctrl} controles de conciliación entre origen, base y audiencias">{'Datos verificados' if not fallas else f'{fallas} diferencias en los datos'}</span>
       <span class="chip warn">Consentimiento pendiente</span>
       <span class="chip warn">Casino desde el {fd(cas_d0)}</span>
     </div>
@@ -1515,11 +1549,11 @@ def construir_html(D):
     <section class="panel"><div class="ph"><h2>Actividad diaria</h2><span class="sub">Jul-sep 2026 · puntos = sábados</span></div><div class="pb">{f_dia}</div></section>
     <section class="panel"><div class="ph"><h2>Alertas</h2><span class="sub">Lo que bloquea o limita la operación</span></div><div class="pb flush"><div class="list">
       <div class="li"><span class="ic crit">!</span><div><b>Base histórica sin teléfono</b><span>{n(hist.j)} jugadores generan el {n(pct_apu_hist, 0)} % del monto apostado y no son contactables con los archivos recibidos.</span></div><a class="btn" href="#ajustes">Ver</a></div>
-      <div class="li"><span class="ic crit">!</span><div><b>Consentimiento y autoexclusión</b><span>Ninguna audiencia se activa sin cruzar la lista de supresión.</span></div><a class="btn" href="#campanas">Ver</a></div>
+      <div class="li"><span class="ic crit">!</span><div><b>Consentimiento y autoexclusión</b><span>Ninguna audiencia se activa sin cruzar la lista de supresión.</span></div><a class="btn" href="#ajustes">Ver</a></div>
       <div class="li"><span class="ic ok">✓</span><div><b>Audiencias recalculadas al {corte:%d-%m-%Y}</b><span>Incluyen casino y los días disponibles de octubre y noviembre.</span></div><a class="btn" href="#plan">Ver</a></div>
       <div class="li"><span class="ic crit">!</span><div><b>Huecos en octubre y noviembre</b><span>{('Sin ningún archivo el ' + sin_txt + '; ') if sin_txt else ''}casino solo desde el {fd(cas_d0)}; {n_rec} combinaciones de día y fuente vienen parciales. Quien solo jugó casino antes del {fd(cas_d0)} puede aparecer como inactivo.</span></div><a class="btn" href="#octubre">Ver</a></div>
       <div class="li"><span class="ic acc">i</span><div><b>Casino confirma la hipótesis</b><span>{n(pct_sr_cas, 0)} % de los "solo recarga" activos desde el {fd(cas_d0)} jugó casino.</span></div><a class="btn" href="#octubre">Ver</a></div>
-      <div class="li"><span class="ic ok">✓</span><div><b>Conciliación completa</b><span>{n_ctrl} controles entre origen, base y audiencias; {fallas} diferencias.</span></div><a class="btn" href="#datos">Ver</a></div>
+      {'' if not fallas else f'<div class="li"><span class="ic crit">!</span><div><b>Diferencias en los datos</b><span>{fallas} de {n_ctrl} controles no cuadran: no enviar hasta revisarlos.</span></div><span></span></div>'}
     </div></div></section>
   </div>
   <div class="g g3">
@@ -1727,32 +1761,29 @@ def construir_html(D):
 
 {vistas_activacion}
 
-<section class="view" id="v-ajustes" data-title="Supuestos y riesgos">
-  <div class="vhead"><div><h1>Supuestos y riesgos</h1><p>Lo confirmado, lo supuesto y lo que falta, más lo que juega en contra de la propuesta.</p></div></div>
-  <section class="panel"><div class="ph"><h2>Supuestos</h2></div><div class="pb flush"><div class="tw"><table class="wide"><thead><tr><th>Tema</th><th>Estado</th><th>Supuesto aplicado</th><th>Cómo se resuelve</th></tr></thead><tbody>
-    <tr><td>Periodo y año</td><td><span class="pill ok">Confirmado</span></td><td>Jul-sep 2026 según las fechas de los archivos</td><td>—</td></tr>
-    <tr><td>Moneda</td><td><span class="pill ok">Confirmado</span></td><td>COP ({CF["cop_eur"]} COP por euro implícito)</td><td>—</td></tr>
-    <tr><td>Zona horaria</td><td><span class="pill warn">Supuesto</span></td><td>Hora de Colombia, por el perfil de actividad</td><td>Confirmar con tecnología</td></tr>
-    <tr><td>Estado de cuenta</td><td><span class="pill warn">Supuesto</span></td><td>Solo el código 1 es cuenta activa</td><td>Diccionario de códigos</td></tr>
-    <tr><td><code>Live = 2</code></td><td><span class="pill warn">Supuesto</span></td><td>Combinada con selecciones en vivo y prepartido</td><td>Equipo de deportes</td></tr>
-    <tr><td>Consentimiento y autoexclusión</td><td><span class="pill crit">Pendiente</span></td><td>Audiencias bloqueadas</td><td>Lista de supresión</td></tr>
-    <tr><td>Texto de baja y leyendas</td><td><span class="pill crit">Pendiente</span></td><td>"+18. Juega responsable." y ≥ 23 caracteres libres</td><td>Validación legal</td></tr>
-    <tr><td>Horario de envío</td><td><span class="pill warn">A validar</span></td><td>Ley 2300 de 2023: lun-vie 7-19 h, sáb 8-15 h</td><td>Validación legal</td></tr>
-    <tr><td>Medios de pago en los SMS</td><td><span class="pill warn">A validar</span></td><td>YAJUEGO PAGOS, PSE y Bre-B (87 % de las recargas)</td><td>Confirmar vigencia</td></tr>
-    <tr><td>Enlaces de destino</td><td><span class="pill crit">Pendiente</span></td><td>URL de ejemplo; los sitios de YAjuego no fueron accesibles desde nuestro entorno</td><td>CRM define URL y acortador</td></tr>
-    <tr><td>Tarifa SMS</td><td><span class="pill crit">Pendiente</span></td><td>Todos los copies caben en 1 segmento GSM-7</td><td>Tarifa del proveedor</td></tr>
-    <tr><td>Casino</td><td><span class="pill warn">Parcial</span></td><td>Desde el {fd(cas_d0)}; entra a segmentos y audiencias al corte actual</td><td>Export de casino del mes completo</td></tr>
-    <tr><td>Octubre</td><td><span class="pill warn">Parcial</span></td><td>Completo sin casino del 1 al 27-oct; {('sin datos el ' + sin_txt + '; ') if sin_txt else ''}{n_rec} combinaciones parciales</td><td>Export de casino del 1 al 27-oct{' y de los días faltantes' if sin_txt else ''}</td></tr>
-    <tr><td>Bonos y promociones</td><td><span class="pill ok">Decisión</span></td><td>Ninguna campaña ofrece incentivos</td><td>Si se suman, confirmarlos y medirlos como variante</td></tr>
-  </tbody></table></div></div></section>
-  <section class="panel"><div class="ph"><h2>Riesgos y contraargumentos</h2></div><div class="pb flush"><div class="list">
-    <div class="li"><span class="ic warn">1</span><div><b>El piloto ataca la población de menor valor</b><span>Tres de cada cuatro envíos van a registrados sin recarga, con conversión natural de 2-3 %. El control dirá si el SMS paga su costo.</span></div><span></span></div>
-    <div class="li"><span class="ic warn">2</span><div><b>Con datos mensuales, la activación llega tarde</b><span>El {n(pct_24h, 0)} % convierte en 24 h. ACT01 no debería operar sin carga diaria.</span></div><span></span></div>
-    <div class="li"><span class="ic warn">3</span><div><b>XS03 puede incomodar a jugadores de casino</b><span>Con un solo día de casino no se puede excluir a quien juega casino de forma habitual; con octubre completo, sí.</span></div><span></span></div>
-    <div class="li"><span class="ic warn">4</span><div><b>Umbrales de un solo trimestre</b><span>Los 14 y 30 días se recalculan en cada corte y quedan versionados.</span></div><span></span></div>
-    <div class="li"><span class="ic warn">5</span><div><b>Campañas de retención pequeñas</b><span>RET04 y REC06 tienen menos de 200 contactables: sirven para probar mensajes, no para concluir.</span></div><span></span></div>
-    <div class="li"><span class="ic crit">6</span><div><b>Riesgo regulatorio y reputacional</b><span>Enviar sin consentimiento, fuera de horario o a un autoexcluido cuesta más que cualquier resultado.</span></div><span></span></div>
-  </div></div></section>
+<section class="view" id="v-ajustes" data-title="Pendientes">
+  <div class="vhead"><div><h1>Pendientes de YAjuego</h1><p>Lo que necesitamos para enviar la primera ola, para llegar a más jugadores y para afinar los segmentos.</p></div></div>
+  <div class="g g3">
+    {tile('Bloquean el envío', str(len(PEND['envio'])), 'Sin esto ninguna campaña sale', acc=True)}
+    {tile('Amplían el alcance', str(len(PEND['alcance'])), 'Más jugadores y campañas a tiempo')}
+    {tile('Afinan los segmentos', str(len(PEND['precision'])), 'Datos faltantes o por confirmar')}
+  </div>
+  {pend_html}
+  <div class="g g2">
+    <section class="panel"><div class="ph"><h2>Riesgos de la propuesta</h2></div><div class="pb flush"><div class="list">
+      <div class="li"><span class="ic warn">1</span><div><b>El piloto ataca la población de menor valor</b><span>La mayoría de los envíos va a registrados sin recarga, con conversión natural de 2-3 %. El control dirá si el SMS paga su costo.</span></div><span></span></div>
+      <div class="li"><span class="ic warn">2</span><div><b>Sin carga diaria, la activación llega tarde</b><span>El {n(pct_24h, 0)} % convierte en 24 h. ACT01 no debería operar sin carga diaria.</span></div><span></span></div>
+      <div class="li"><span class="ic warn">3</span><div><b>XS03 puede incomodar a jugadores de casino</b><span>Sin casino del 1 al 27-oct no se puede excluir del todo a quien juega casino de forma habitual.</span></div><span></span></div>
+      <div class="li"><span class="ic warn">4</span><div><b>Campañas de retención pequeñas</b><span>RET04 y REC06 suman {n(cam.loc['RET04'].seleccionados + cam.loc['REC06'].seleccionados)} jugadores: sirven para probar mensajes, no para concluir.</span></div><span></span></div>
+      <div class="li"><span class="ic crit">5</span><div><b>Riesgo regulatorio y reputacional</b><span>Enviar sin consentimiento, fuera de horario o a un autoexcluido cuesta más que cualquier resultado.</span></div><span></span></div>
+    </div></div></section>
+    <section class="panel"><div class="ph"><h2>Decisiones tomadas</h2></div><div class="pb flush"><div class="list">
+      <div class="li"><span class="ic ok">✓</span><div><b>Sin bonos ni promociones</b><span>Si se suman, se confirman con YAjuego y se miden como variante.</span></div><span></span></div>
+      <div class="li"><span class="ic ok">✓</span><div><b>Un SMS por jugador por semana</b><span>Cada jugador entra a una sola campaña por ola, la de mayor prioridad.</span></div><span></span></div>
+      <div class="li"><span class="ic ok">✓</span><div><b>20 % de cada audiencia como control</b><span>Asignación fija por jugador, para medir el efecto real del SMS.</span></div><span></span></div>
+      <div class="li"><span class="ic ok">✓</span><div><b>Señales de juego responsable fuera</b><span>Quien muestra señales de riesgo no recibe mensajes promocionales.</span></div><span></span></div>
+    </div></div></section>
+  </div>
 </section>
 
   </main>
