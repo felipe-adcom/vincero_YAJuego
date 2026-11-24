@@ -803,10 +803,10 @@ VISTAS_ACTIVACION = r"""<section class="view" id="v-campanas" data-title="Campa�
           <label class="search"><span class="muted small">$</span><input id="tarifa" type="number" min="0" step="1" placeholder="Tarifa del proveedor" inputmode="numeric"></label></div>
       </div>
       <div class="g g4" id="sim-tiles">
-        <div class="tile"><div class="lab">SMS a enviar</div><div class="val" id="s-env">—</div><div class="ft">Más <span id="s-ctl" class="mono">—</span> jugadores en control</div></div>
-        <div class="tile"><div class="lab">Lo que pasaría sin SMS</div><div class="val" id="s-sin">—</div><div class="ft">Acciones objetivo esperadas solo con la tasa natural observada</div></div>
-        <div class="tile acc"><div class="lab">Acciones adicionales por el SMS</div><div class="val" id="s-add">—</div><div class="ft" id="s-add-l">—</div></div>
-        <div class="tile"><div class="lab">Costo por acción adicional</div><div class="val" id="s-cpa">—</div><div class="ft" id="s-cost">Ingresa la tarifa por SMS</div></div>
+        <div class="tile"><div class="lab">SMS a enviar</div><div class="val" id="s-env">—</div><div class="ft">Uno por jugador en la ola. Otros <span id="s-ctl" class="mono">—</span> quedan sin mensaje como grupo de control.</div></div>
+        <div class="tile"><div class="lab">Lo que pasaría sin SMS</div><div class="val" id="s-sin">—</div><div class="ft">Recargas o apuestas que igual ocurrirían sin enviar nada, según lo que hicieron jugadores parecidos en semanas anteriores.</div></div>
+        <div class="tile acc"><div class="lab">Lo que agregaría el SMS</div><div class="val" id="s-add">—</div><div class="ft" id="s-add-l">—</div></div>
+        <div class="tile"><div class="lab">Costo por cada acción que agrega el SMS</div><div class="val" id="s-cpa">—</div><div class="ft" id="s-cost">Escribe arriba la tarifa por SMS del proveedor para calcularlo.</div></div>
       </div>
       <div class="tw"><table class="wide"><thead><tr><th>Campaña</th><th>Objetivo</th><th class="num">SMS</th><th class="num">Tasa natural</th><th class="num">Sin SMS</th><th class="num">Con SMS</th><th class="num">Adicionales</th><th class="num">Monto asociado</th><th class="num">Costo / adicional</th><th>¿Se podrá confirmar?</th></tr></thead><tbody id="sim-body"></tbody></table></div>
       <div class="note"><b>Lectura de Vincero</b><span>Con efectos realistas para un SMS sin incentivo (+10 % a +25 % sobre la tasa natural), el resultado de una sola ola es pequeño y ninguna campaña alcanza a confirmarlo con su grupo de control. Por eso proponemos leer la ola 1 como piloto, acumular 2 o 3 olas antes de decidir, y priorizar el acceso a la base histórica: con miles de jugadores más, los mismos efectos sí se pueden confirmar.</span></div>
@@ -967,9 +967,9 @@ JS = r"""
     document.getElementById('s-ctl').textContent = nf(ctl);
     document.getElementById('s-sin').textContent = nf(sin);
     document.getElementById('s-add').textContent = '+' + nf(add);
-    document.getElementById('s-add-l').textContent = `Monto asociado ${money(monto)} (no es ingreso)`;
+    document.getElementById('s-add-l').textContent = `Recargas o apuestas extra frente al grupo de control, en el escenario elegido. Equivalen a ${money(monto)} recargados o apostados (no es ingreso).`;
     document.getElementById('s-cpa').textContent = (t > 0 && add > 0) ? money(env * t / add) : '—';
-    document.getElementById('s-cost').textContent = t > 0 ? `Costo de la ola: ${money(env * t)}` : 'Ingresa la tarifa por SMS';
+    document.getElementById('s-cost').textContent = t > 0 ? `La ola cuesta ${money(env * t)}; dividido entre lo que agrega el SMS.` : 'Escribe arriba la tarifa por SMS del proveedor para calcularlo.';
   }
   document.querySelectorAll('#esc button').forEach(b => b.addEventListener('click', () => {
     lift = parseFloat(b.dataset.l);
@@ -1250,6 +1250,7 @@ def construir_html(D):
         return float(np.nansum(x)) if len(x) else 0.0
     dias_ambos = [d for d in rango if estado[(d, "casino")] == "completo" and estado[(d, "apuestas")] == "completo"]
     dep_mismos = sum(cnt.loc[(d, "apuestas")].m for d in dias_ambos if (d, "apuestas") in cnt.index)
+    cas_mismos = sum(cnt.loc[(d, "casino")].m for d in dias_ambos if (d, "casino") in cnt.index)
     cb = D["cas_base"].set_index("g").n
 
     # Tendencia semanal: promedio por día completo de cada producto, en toda la base.
@@ -1525,28 +1526,73 @@ def construir_html(D):
                       f'<th>Responsable</th><th>Estado</th></tr></thead><tbody>{filas_p}</tbody></table></div></div></section>\n  ')
 
     # ---------- predicción (regresión logística) ----------
+    pct = lambda x, d=0: f"{n(100 * x, d)} %"  # noqa: E731
+
+    def dias(x):
+        x = int(round(x))
+        return f"{x} día" if x == 1 else f"{x} días"
+
+    # Cómo leer cada factor: título, frase con probabilidades concretas y acción. {lo}/{hi}: valores; {plo}/{phi}: probabilidades.
+    FACTORES_TXT = {
+        "abandono": {
+            "dias_activos_30": ("Frecuencia de juego en el último mes",
+                                "Un jugador que recargó o apostó solo {lo_d} de los últimos 30 tiene {plo} de probabilidad de no volver el próximo mes. Si jugó {hi_d}, baja a {phi}.",
+                                "Los de baja frecuencia son los primeros a retener: en el Constructor, filtra «Riesgo de abandono alto» y «Enfriándose» para RET04."),
+            "dias_sin_actividad": ("Días desde su última recarga o apuesta",
+                                   "Quien jugó hace {lo_d} tiene {plo} de probabilidad de no volver el próximo mes; quien lleva {hi_d} sin recargar ni apostar, {phi}.",
+                                   "No esperar a que pasen 30 días: RET04 debe salir apenas el jugador supera su ritmo habitual, entre el día 7 y el 14 para la mayoría."),
+            "verificado": ("Celular verificado",
+                           "Un jugador sin el celular verificado tiene {plo} de probabilidad de irse; con el celular verificado, {phi}.",
+                           "Pedir la verificación del celular en el registro y en el mensaje de bienvenida: es un paso sencillo que acompaña a los jugadores que se quedan."),
+            "antiguedad_dias": ("Tiempo como jugador",
+                                "Un jugador que empezó a jugar hace {lo_d} tiene {plo} de probabilidad de irse; uno que empezó hace {hi_d}, {phi}.",
+                                "Los primeros dos meses son los de mayor riesgo: la segunda recarga (ONB02) rinde más que recuperar a quien ya se fue."),
+            "registrado_desde_julio": ("Jugador nuevo o de la base histórica",
+                                       "Un jugador de la base anterior a julio tiene {plo} de probabilidad de irse; uno registrado desde julio, {phi}.",
+                                       "Los nuevos se van más: acompañarlos en sus primeras semanas con mensajes de servicio (cómo recargar, agenda deportiva)."),
+        },
+        "activacion": {
+            "aposto_sin_recargar": ("Ya apostó sin haber recargado",
+                                    "Un registrado que no ha apostado tiene {plo} de probabilidad de hacer su primera recarga en las próximas 2 semanas; uno que ya apostó sin recargar, {phi}.",
+                                    "Son los más cerca de convertir: ponerlos primero en ACT01 con un mensaje sobre cómo recargar."),
+            "verificado": ("Celular verificado",
+                           "Sin el celular verificado, {plo} de probabilidad de recargar en 2 semanas; con el celular verificado, {phi}.",
+                           "Recordar la verificación del celular junto con la invitación a recargar."),
+            "dias_desde_registro": ("Días desde el registro sin recargar",
+                                    "Quien se registró hace {lo_d} y no ha recargado tiene {plo} de probabilidad de hacerlo en las próximas 2 semanas; a los {hi_d}, solo {phi}.",
+                                    "El SMS de activación debe salir en las primeras 24-72 horas (ACT01). Después del día 21 casi nadie convierte y el SMS difícilmente paga su costo."),
+            "telefono_valido": ("Teléfono válido en el registro",
+                                "Con un teléfono inválido o incompleto, {plo} de probabilidad de recargar en 2 semanas; con un teléfono válido, {phi}.",
+                                "Validar el formato del celular en el formulario de registro: además de convertir más, es la única forma de contactarlo."),
+        },
+    }
     PRED_TXT = {
-        "abandono": dict(titulo="Abandono en los próximos 30 días", pob="jugadores con recarga o apuesta en los últimos 30 días",
-                         evento="dejarían de recargar y de apostar", corto="abandonos", banda="Riesgo alto",
-                         uso="Riesgo alto y contactable: prioridad para RET04, antes de que se enfríe. Riesgo alto sin teléfono: es la base histórica que hoy no podemos contactar."),
-        "activacion": dict(titulo="Primera recarga en los próximos 14 días", pob="registrados en los últimos 30 días que todavía no recargan",
-                           evento="harían su primera recarga", corto="primeras recargas", banda="Probabilidad alta",
-                           uso="Probabilidad alta: ACT01 y ACT05 tienen más opción de convertir. Probabilidad baja: el SMS difícilmente paga su costo; conviene medirlo antes de escalar."),
+        "abandono": dict(titulo="¿Quién va a dejar de jugar en los próximos 30 días?",
+                         pob="jugadores que recargaron o apostaron en los últimos 30 días",
+                         evento="dejarían de recargar y apostar en los próximos 30 días", corto="abandonos",
+                         auc_txt="Entre un jugador que se fue y uno que siguió, el modelo le da más riesgo al que se fue {} de cada 100 veces.", banda="Riesgo de abandono alto",
+                         pasos=[f'Abre el <a href="#audiencias">Constructor</a> y marca «Riesgo de abandono alto» con «Enfriándose (15-30 días)»: es la audiencia de RET04 ordenada por quién tiene más probabilidad de irse.',
+                                "A los activos con riesgo alto, enviar solo mensajes de servicio (agenda, cómo recargar); todavía están jugando y una promoción no hace falta.",
+                                "Los de riesgo alto sin teléfono son de la base anterior a julio: son el argumento para pedirle a YAjuego sus datos de contacto (ver Pendientes)."],
+                         accion={"3_activo": "Mensajes de servicio a los de riesgo alto", "4_enfriandose": "RET04: empezar por riesgo alto y contactables",
+                                 "2_nuevo_en_activacion": "ONB02: acompañar a los de riesgo alto", "5_inactivo_31_60": "REC06"}),
+        "activacion": dict(titulo="¿Quién va a hacer su primera recarga en los próximos 14 días?",
+                           pob="registrados en los últimos 30 días que todavía no recargan",
+                           evento="harían su primera recarga en los próximos 14 días", corto="primeras recargas",
+                           auc_txt="Entre un registrado que recargó y uno que no, el modelo le da más probabilidad al que recargó {} de cada 100 veces.", banda="Probabilidad de activarse alta",
+                           pasos=[f'Abre el <a href="#audiencias">Constructor</a> y marca «Prob. de activarse alta»: son los primeros a contactar en ACT01 y ACT05.',
+                                  "Con probabilidad baja y más de 21 días desde el registro, el SMS difícilmente paga su costo: enviarlo solo como prueba con grupo de control.",
+                                  "Automatizar la carga diaria para que ACT01 salga a las 24-72 horas del registro, cuando la probabilidad es más alta."],
+                           accion={"1_nuevo_sin_actividad": "ACT01 (0-7 días) y ACT05 (8-30 días), empezando por probabilidad alta"}),
     }
 
-    def fmt_val(x, unidad):
-        if unidad == "$":
-            return cop(round(x, -3) if x >= 10000 else x)
-        if unidad == "%":
-            return f"{n(100 * x, 0)} %"
-        return f"{n(x)} {unidad}"
-
-    def frase(f):
-        o = f["odds"]
-        efecto = (f"multiplica la probabilidad por {n(o, 1)}" if o >= 1 else f"divide la probabilidad por {n(1 / o, 1)}")
-        if f["binaria"]:
-            return f"<b>{esc(f['nombre'].capitalize())}</b><span>{efecto.capitalize()}.</span>"
-        return f"<b>{esc(f['nombre'].capitalize())}</b><span>Pasar de {fmt_val(f['desde'], f['unidad'])} a {fmt_val(f['hasta'], f['unidad'])} {efecto}.</span>"
+    def frase(f, k):
+        t = FACTORES_TXT[k].get(f["variable"])
+        vals = dict(lo_d=dias(f["desde"]), hi_d=dias(f["hasta"]), plo=pct(f["p_desde"], 0 if f["p_desde"] >= 0.1 else 1),
+                    phi=pct(f["p_hasta"], 0 if f["p_hasta"] >= 0.1 else 1))
+        if t:
+            return t[0], t[1].format(**vals), t[2]
+        return f["nombre"].capitalize(), f"Pasar de {f['desde']:.0f} a {f['hasta']:.0f} {f['unidad']} cambia la probabilidad de {vals['plo']} a {vals['phi']}.", ""
 
     pred_html = ""
     for m in D["pred"]:
@@ -1554,43 +1600,59 @@ def construir_html(D):
         tx = PRED_TXT[k]
         ps = D["pred_seg"][D["pred_seg"].modelo == k]
         tot, esp = int(ps.n.sum()), float(ps.esperado.sum())
-        ic = 1.96 * math.sqrt(float(ps["var"].sum()))
         alta = ps[ps.banda == "alta"]
+        n_alta, p_alta, c_alta = int(alta.n.sum()), float(alta.esperado.sum() / max(alta.n.sum(), 1)), int(alta.contactables.sum())
         seg = ps.groupby("ciclo_vida").agg(n=("n", "sum"), esp=("esperado", "sum")).reset_index()
         alta_seg = alta.groupby("ciclo_vida").agg(na=("n", "sum"), ca=("contactables", "sum")).reset_index()
         seg = seg.merge(alta_seg, on="ciclo_vida", how="left").fillna(0).sort_values("n", ascending=False)
-        filas = [dict(s=f"<strong>{NOMBRES_CV.get(r.ciclo_vida, r.ciclo_vida)}</strong>", n=n(r.n), e=n(r.esp), p=f"{n(100 * r.esp / r.n, 1)} %",
-                      a=n(r.na), c=n(r.ca)) for r in seg.itertuples()]
-        t_seg_p = table(pd.DataFrame(filas), [("s", "Segmento"), ("n", "Jugadores"), ("e", "Esperados"), ("p", "Probabilidad media"),
-                                              ("a", tx["banda"]), ("c", f"{tx['banda']} y contactables")], num=("n", "e", "p", "a", "c"))
+        seg = seg[seg.n >= 50]
+        filas = [dict(s=f"<strong>{NOMBRES_CV.get(r.ciclo_vida, r.ciclo_vida)}</strong>", n=n(r.n), e=n(r.esp), p=pct(r.esp / r.n, 1),
+                      a=n(r.na), c=n(r.ca), q=tx["accion"].get(r.ciclo_vida, "—")) for r in seg.itertuples()]
+        t_seg_p = table(pd.DataFrame(filas), [("s", "Segmento"), ("n", "Jugadores"), ("e", "Se irían" if k == "abandono" else "Recargarían"),
+                                              ("p", "Prob. promedio"), ("a", "En banda alta"), ("c", "Contactables"), ("q", "Qué hacer")],
+                        num=("n", "e", "p", "a", "c"))
         cal = pd.DataFrame(m["calibracion"])
-        f_cal = bars_v([f"{i + 1}" for i in cal.index], [("Probabilidad predicha", list(100 * cal.pred), "--s1"),
-                                                         ("Lo que pasó", list(100 * cal.real), "--s2")],
+        f_cal = bars_v([f"{i + 1}" for i in cal.index], [("Lo que el modelo predijo", list(100 * cal.pred), "--s1"),
+                                                         ("Lo que realmente pasó", list(100 * cal.real), "--s2")],
                        fmt=lambda v: f"{n(v, 1)} %" if v < 10 else f"{n(v, 0)} %", h=240, labels=False,
-                       sub=["menos" if i == 0 else ("más" if i == len(cal) - 1 else "") for i in cal.index])
-        fac = "".join(f'<div class="li"><span class="ic {"crit" if (f["odds"] > 1) == (k == "abandono") else "ok"}">{"↑" if f["odds"] > 1 else "↓"}</span><div>{frase(f)}</div><span></span></div>'
-                      for f in m["factores"][:6])
+                       sub=["menor prob." if i == 0 else ("mayor prob." if i == len(cal) - 1 else "") for i in cal.index])
+        sel = [f for f in m["factores"] if abs(f["diferencia"]) >= (0.02 if k == "abandono" else 0.005)][:5]
+        otros = [f["nombre"] for f in m["factores"] if f not in sel]
+        fac = ""
+        for f in sel:
+            tit, txt, acc = frase(f, k)
+            sube = f["p_hasta"] > f["p_desde"]
+            malo = sube == (k == "abandono")
+            fac += (f'<div class="li"><span class="ic {"crit" if malo else "ok"}">{"↑" if sube else "↓"}</span><div><b>{esc(tit)}</b>'
+                    f'<span>{txt}</span>' + (f'<span style="display:block;margin-top:4px;color:var(--fg)"><b style="display:inline;font-size:.8rem">Qué hacer:</b> {acc}</span>' if acc else '')
+                    + '</div><span></span></div>')
+        pasos = "".join(f"<li>{x}</li>" for x in tx["pasos"])
+        azar = "al azar se llegaría al 20 %"
         pred_html += f"""
-  <section class="panel"><div class="ph"><h2>{tx['titulo']}</h2><span class="sub">{n(tot)} {tx['pob']}</span></div><div class="pb">
+  <section class="panel"><div class="ph"><h2>{tx['titulo']}</h2><span class="sub">Evalúa a {n(tot)} {tx['pob']}</span></div><div class="pb">
     <div class="g g4">
-      {tile('Pronóstico', n(esp), f"{tx['evento']}: {n(100 * esp / tot, 0)} % de los {n(tot)}", acc=True)}
-      {tile(tx['banda'], n(int(alta.n.sum())), f"{n(int(alta.contactables.sum()))} contactables · el 20 % con mayor probabilidad")}
-      {tile('Qué tan bien ordena', f"{n(100 * m['captura_top20'], 0)}<small> %</small>", f"de los {tx['corto']} reales cayó en el 20 % que el modelo marcó más alto")}
-      {tile('Acierto (AUC)', n(m['auc'], 2), "1 = perfecto · 0,5 = azar · desde 0,8 es bueno")}
+      {tile('Pronóstico', n(esp), f"jugadores {tx['evento']}, según el modelo: el {n(100 * esp / tot, 0)} % de los {n(tot)} evaluados.", acc=True)}
+      {tile(tx['banda'], n(n_alta), f"Es el 20 % con mayor probabilidad (en promedio {pct(p_alta, 0 if p_alta >= 0.1 else 1)}). {n(c_alta)} tienen teléfono y se pueden contactar.")}
+      {tile('Si contactamos a ese 20 %', f"{n(100 * m['captura_top20'], 0)}<small> %</small>", f"de los {tx['corto']} quedan cubiertos; {azar}. Comprobado con datos que el modelo no vio.")}
+      {tile('Confiabilidad', n(m['auc'], 2), f"De 0,5 (azar) a 1 (perfecto). {tx['auc_txt'].format(n(100 * m['auc'], 0))}")}
     </div>
     <div class="g g2">
-      <div><h3 style="margin-bottom:8px">Qué pesa más</h3><div class="list">{fac}</div>
-        <p class="small muted" style="margin-top:8px">Efecto de cada factor manteniendo los demás iguales. Muestra asociación, no causa.</p></div>
-      <div><h3 style="margin-bottom:8px">¿Acierta? Predicho frente a lo que pasó</h3>{f_cal}
-        <p class="small muted">Jugadores ordenados de menor a mayor probabilidad, en 10 grupos iguales. Prueba con {n(m['n_validacion'])} jugadores al {pd.Timestamp(m['t_validacion']):%d-%m} que el modelo no vio al entrenar.</p></div>
+      <div><h3 style="margin-bottom:4px">Qué explica la probabilidad</h3>
+        <p class="small muted" style="margin-bottom:8px">Comparación entre jugadores que solo se diferencian en ese factor. Son asociaciones: ayudan a elegir a quién contactar y cuándo, no prueban la causa.</p>
+        <div class="list">{fac}</div>
+        {f'<p class="small muted" style="margin-top:8px">Casi no cambian la probabilidad: {", ".join(otros)}.</p>' if otros else ''}</div>
+      <div><h3 style="margin-bottom:4px">¿El modelo acierta?</h3>
+        <p class="small muted" style="margin-bottom:8px">Prueba con {n(m['n_validacion'])} jugadores al {pd.Timestamp(m['t_validacion']):%d-%m}, que el modelo no usó para aprender. Se ordenaron de menor a mayor probabilidad y se partieron en 10 grupos iguales: si las dos barras de cada grupo se parecen, el modelo acierta.</p>
+        {f_cal}</div>
     </div>
+    <h3>Por segmento</h3>
     {t_seg_p}
-    <div class="note"><b>Cómo usarlo</b><span>{tx['uso']}</span></div>
+    <div class="note"><b>Qué hacer con esto</b><ol style="margin:4px 0 0;padding-left:18px;display:grid;gap:4px">{pasos}</ol></div>
   </div></section>"""
     pred_html = f"""<section class="view" id="v-prediccion" data-title="Predicción">
-  <div class="vhead"><div><h1>Predicción</h1><p>Dos modelos de regresión logística, reentrenados con toda la base en cada carga. Estiman la probabilidad de cada jugador a partir de su comportamiento hasta el {corte:%d-%m-%Y}: no garantizan lo que hará ni miden el efecto de un SMS; eso lo dicen los grupos de control.</p></div></div>
+  <div class="vhead"><div><h1>Predicción</h1><p>Dos modelos estadísticos (regresión logística) que estiman, para cada jugador, la probabilidad de que deje de jugar o de que haga su primera recarga. Aprenden de lo que hicieron jugadores parecidos en las semanas anteriores y se vuelven a entrenar con cada carga de datos. Sirven para decidir a quién contactar primero; el efecto real del SMS lo mide el grupo de control.</p></div></div>
   {pred_html}
-  <div class="note"><b>Cómo se construyen</b><span>Se toma la foto de cada jugador en cortes semanales pasados y se mira qué hizo después. El modelo aprende de esos casos y se prueba en el corte más reciente, que no vio. Solo usa información conocida en cada fecha: los campos de Registros que son una foto del día de la exportación (saldo, depositante, último login) quedan fuera. Casino todavía no entra: existe desde el {fd(cas_d0)} y no alcanza para entrenar. Los huecos de datos (por ejemplo, el {sin_txt or '—'}) restan precisión.</span></div>
+  <div class="note"><b>Cómo se construyen</b><span>Para cada semana pasada se toma la foto de cada jugador (cuánto y cuándo jugó, cómo recarga, si verificó el celular) y se mira qué hizo después. El modelo aprende de esos casos y se prueba en la semana más reciente, que no vio. Solo usa información conocida en cada fecha: datos que YAjuego exporta como foto del día (saldo, último ingreso) quedan fuera porque revelarían el futuro. Casino aún no entra porque existe desde el {fd(cas_d0)}; los días sin datos ({sin_txt or '—'}) restan algo de precisión.</span></div>
 </section>
 """
     nav = [("Operación", [("inicio", "home", "Inicio", ""), ("datos", "db", "Fuentes de datos", str(int((D['manifiesto'].estado == 'cargado').sum()))),
@@ -1637,18 +1699,18 @@ def construir_html(D):
   <div class="vhead"><div><h1>Resumen del espacio de trabajo</h1><p>Registros, recargas, apuestas deportivas, retiros y casino consolidados en una sola base. Cada carga recalcula todo sobre la base completa: análisis, segmentos, audiencias y campañas al {corte:%d-%m-%Y}.</p></div><span class="chip acc">Última actualización de datos: {ultimo:%d-%m-%Y}</span></div>
   <section class="panel"><div class="ph"><h2>Base consolidada · {periodo_txt}</h2><a class="btn" href="#octubre">Ver tendencias</a></div><div class="pb">
     <div class="g g4">
-      {tile('Recargas', mm(rec.m), f"{n(rec.n)} recargas · {n(rec.j)} jugadores")}
-      {tile('Apuestas deportivas', mm(apu.m), f"{n(apu.n)} apuestas · {n(apu.j)} apostadores")}
-      {tile('Casino', mm(cas.ap), f"{n(cas.rondas)} rondas · {n(cas.jug)} jugadores · desde el {fd(cas_d0)}", acc=True)}
-      {tile('Retiros', mm(retd.m), f"{n(retd.n)} retiros · {n(retd.j)} jugadores")}
+      {tile('Recargas', mm(rec.m), f"{n(rec.n)} recargas de {n(rec.j)} jugadores. Es dinero que los jugadores cargan a su cuenta, no ingreso de YAjuego.")}
+      {tile('Apuestas deportivas', mm(apu.m), f"Monto apostado en {n(apu.n)} apuestas de {n(apu.j)} jugadores.")}
+      {tile('Casino', mm(cas.ap), f"Monto apostado en {n(cas.rondas)} rondas de {n(cas.jug)} jugadores. Solo hay datos desde el {fd(cas_d0)}.", acc=True)}
+      {tile('Retiros', mm(retd.m), f"Pagado a {n(retd.j)} jugadores en {n(retd.n)} retiros, neto de comisiones.")}
     </div>
     <p class="small muted">Montos recargados y apostados: no equivalen a ingresos. Casino desde el {fd(cas_d0)}.{(' Sin ningún archivo: ' + sin_txt + '.') if sin_txt else ''}{(' Sin apuestas deportivas: ' + dep_txt + '.') if dep_txt else ''} {n_rec} combinaciones de día y fuente vienen parciales; los promedios por día solo usan días completos.</p>
   </div></section>
   <div class="g g4">
-    {tile('Jugadores con perfil', n(D['universo']), f"Al {corte:%d-%m-%Y} · incluye casino")}
-    {tile('Monto apostado sin contacto', f"{n(pct_apu_hist, 0)}<small> %</small>", 'Base registrada antes de julio', acc=True)}
-    {tile('Conversión registro → recarga', f"{n(conv_tot, 1)}<small> %</small>", f"{n(pct_24h, 0)} % de los que convierten lo hacen en 24 h")}
-    {tile('Audiencias listas', n(pend), f"{n(total_envios)} SMS + {n(pend - total_envios)} en control")}
+    {tile('Jugadores', n(D['universo']), f"Aparecen en algún archivo desde el 1-jul. {n(reg_tot.j)} se registraron desde julio y tienen teléfono; el resto no.")}
+    {tile('Apostado por jugadores sin teléfono', f"{n(pct_apu_hist, 0)}<small> %</small>", f"del monto en deportes viene de {n(hist.j)} jugadores registrados antes de julio. Conseguir sus teléfonos es lo que más amplía el alcance (ver Pendientes).", acc=True)}
+    {tile('Registrados que recargan', f"{n(conv_tot, 1)}<small> %</small>", f"De cada 100 que se registran, {n(conv_tot, 0)} recargan alguna vez; {n(pct_24h, 0)} % de ellos lo hace en las primeras 24 h. Por eso ACT01 debe salir ese mismo día.")}
+    {tile('Jugadores en campañas', n(pend), f"{n(total_envios)} recibirían un SMS y {n(pend - total_envios)} quedan sin mensaje como grupo de control, para medir el efecto. Ver Campañas SMS.")}
   </div>
   <div class="g g-73">
     <section class="panel"><div class="ph"><h2>Actividad diaria</h2><span class="sub">{periodo_txt} · días completos</span></div><div class="pb">{f_dia}</div></section>
@@ -1730,10 +1792,10 @@ def construir_html(D):
 <section class="view" id="v-jugadores" data-title="Jugadores">
   <div class="vhead"><div><h1>Jugadores</h1><p>Los {n(tot_j)} jugadores que aparecen en algún archivo {periodo_txt}. Cada uno tiene un perfil con más de 100 indicadores al {corte:%d-%m-%Y}; aquí se agrupan por la actividad que tuvieron.</p></div></div>
   <div class="g g4">
-    {tile('Jugadores con perfil', n(tot_j), 'Vistos en registros, recargas, apuestas o retiros')}
-    {tile('Recargan y apuestan', n(activos_rec_apu), f"{n(100 * activos_rec_apu / tot_j, 1)} % · concentran casi toda la actividad", acc=True)}
-    {tile('Registrados sin actividad', n(nuevos_sin), f"{n(100 * nuevos_sin / tot_j, 1)} % · se registraron y no recargaron ni apostaron")}
-    {tile('Recarga sin apuesta deportiva', n(int(pf[pf.act == 'Solo recarga'].j.sum())), f'Su producto es casino: {n(pct_sr_cas, 0)} % juega casino desde el {fd(cas_d0)}')}
+    {tile('Jugadores', n(tot_j), 'Todos los que aparecen en registros, recargas, apuestas, casino o retiros desde el 1-jul.')}
+    {tile('Recargan y apuestan', n(activos_rec_apu), f"{n(100 * activos_rec_apu / tot_j, 1)} % del total, pero generan casi todo el monto. Con ellos la prioridad es retener: ver su riesgo en Predicción.", acc=True)}
+    {tile('Registrados sin actividad', n(nuevos_sin), f"{n(100 * nuevos_sin / tot_j, 1)} % se registró y nunca recargó ni apostó. Los recientes son la audiencia de ACT01 (0-7 días) y ACT05 (8-30 días).")}
+    {tile('Recargan sin apostar en deportes', n(int(pf[pf.act == 'Solo recarga'].j.sum())), f'Su producto es casino: el {n(pct_sr_cas, 0)} % juega casino. Para ellos, deportes es venta cruzada (XS03), no activación.')}
   </div>
   <section class="panel"><div class="ph"><h2>Composición por actividad</h2><span class="sub">Jugadores por tipo de actividad, {periodo_txt}</span></div><div class="pb">{f_pf}</div></section>
   <section class="panel"><div class="ph"><h2>Detalle por población y actividad</h2><span class="sub">Totales y medianas por grupo</span></div><div class="pb flush">{t_pf}</div></section>
@@ -1823,10 +1885,10 @@ def construir_html(D):
       <div class="big" id="ab-n">—</div><span class="muted small" id="ab-pct"></span>
       <div class="bar"><i id="ab-bar" style="width:0"></i></div>
       <div class="g g2" style="gap:10px">
-        {tile('Contactables', '<span id="ab-cont">—</span>', 'Con teléfono válido')}
-        {tile('Envío / control', '<span id="ab-env">—</span>', 'Control 20 %: <span id="ab-ctrl" class="mono">—</span>')}
-        {tile('Con señal JR', '<span id="ab-jr">—</span>', 'En la selección, antes de excluir')}
-        {tile('Sin teléfono', '<span id="ab-tel">—</span>', 'Base anterior a julio')}
+        {tile('Contactables', '<span id="ab-cont">—</span>', 'Teléfono válido y no compartido, cuenta activa. Falta cruzar consentimiento y autoexclusión.')}
+        {tile('Recibirían el SMS', '<span id="ab-env">—</span>', 'Otros <span id="ab-ctrl" class="mono">—</span> (20 %) quedan sin mensaje como grupo de control.')}
+        {tile('Con señal de juego responsable', '<span id="ab-jr">—</span>', 'Por ejemplo, muchas recargas en un día o de madrugada. Se excluyen de todo mensaje promocional.')}
+        {tile('Sin teléfono', '<span id="ab-tel">—</span>', 'Registrados antes de julio: no se pueden contactar con los datos actuales.')}
       </div>
       <p class="small muted">Los números junto a cada opción muestran cuántos jugadores aporta con el resto de filtros activos.</p>
     </div></section>
@@ -1839,10 +1901,10 @@ def construir_html(D):
   <section class="panel"><div class="ph"><h2>Detalle por semana</h2><span class="sub">La más reciente primero</span></div><div class="pb flush">{t_pd}</div>
     <div class="pb small muted">Cada valor es el promedio por día de la semana, contando solo los días con archivo completo de ese producto; si faltan días, se indica cuántos se usaron. Las semanas con festivo no son del todo comparables con una semana normal. Casino existe desde el {fd(cas_d0)}.</div></section>
   <div class="g g4">
-    {tile('Rondas de casino', n(cas.rondas), f"{n(cas.jug)} jugadores · {n(cas.juegos)} juegos")}
-    {tile('Apostado en casino', mm(cas.ap), f"Deportes en los mismos días: {mm(dep_mismos)}", acc=True)}
-    {tile('Pagado al jugador', mm(cas.pg), f"Diferencia {mm(cas.ap - cas.pg)} ({n(100 * (cas.ap - cas.pg) / cas.ap, 1)} %); no es GGR")}
-    {tile('Concentración', f"{n(D['cas_top'].t1, 0)}<small> %</small>", f"del monto en el 1 % de jugadores · top 10 %: {n(D['cas_top'].t10, 0)} %")}
+    {tile('Rondas de casino', n(cas.rondas), f"Jugadas de {n(cas.jug)} jugadores en {n(cas.juegos)} juegos distintos desde el {fd(cas_d0)}.")}
+    {tile('Apostado en casino', mm(cas.ap), f"En los días con datos de ambos productos, casino movió {n(cas_mismos / dep_mismos, 1)} veces lo que movió deportes. Es el producto principal de buena parte de la base.", acc=True)}
+    {tile('Premios pagados en casino', mm(cas.pg), f"La diferencia con lo apostado es {mm(cas.ap - cas.pg)} ({n(100 * (cas.ap - cas.pg) / cas.ap, 1)} %). No es la ganancia de YAjuego: no descuenta bonos, impuestos ni costos.")}
+    {tile('Concentración en casino', f"{n(D['cas_top'].t1, 0)}<small> %</small>", f"del monto lo apuesta el 1 % de los jugadores; el 10 % más activo, el {n(D['cas_top'].t10, 0)} %. Pocos jugadores mueven el promedio: conviene mirar medianas.")}
   </div>
   {insight("Quien recarga y no apuesta en deportes juega casino", f"{n(pct_sr_cas, 0)} %", f"de quienes recargan sin apostar en deportes juega casino",
            f"Desde el {fd(cas_d0)}, {n(hc.recargan)} jugadores recargaron; {n(hc.sin_dep)} no apostaron en deportes y {n(hc.sin_dep_cas)} de ellos jugaron casino. Otros {n(hc.dep_cas)} juegan ambos productos.",

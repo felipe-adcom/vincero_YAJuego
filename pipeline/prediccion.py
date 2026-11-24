@@ -183,6 +183,23 @@ def factores(pipe, X, cfg):
     return sorted(out, key=lambda r: -abs(math.log(r["odds"])))
 
 
+def efectos_en_probabilidad(pipe, pob, cfg, factores_lista):
+    """Para cada factor: probabilidad promedio de la población actual si todos tuvieran el valor bajo (p25 o 0)
+    y si todos tuvieran el valor alto (p75 o 1), dejando el resto de sus datos como están. Es más fácil de
+    leer que un coeficiente: "con 1 día de actividad, 70 %; con 10 días, 25 %"."""
+    cols = cfg["num"] + cfg["cat"]
+    for f in factores_lista:
+        c = f["variable"]
+        vals = []
+        for v in (f["desde"], f["hasta"]):
+            X = pob[cols].copy()
+            X[c] = math.log1p(v) if c.startswith("log_") else v
+            vals.append(float(pipe.predict_proba(X)[:, 1].mean()))
+        f["p_desde"], f["p_hasta"] = vals
+        f["diferencia"] = vals[1] - vals[0]
+    return sorted(factores_lista, key=lambda r: -abs(r["diferencia"]))
+
+
 def calibracion(y, p, grupos=10):
     d = pd.DataFrame({"y": y, "p": p})
     d["g"] = pd.qcut(d.p.rank(method="first"), grupos, labels=False)
@@ -244,6 +261,7 @@ def entrenar(con, nombre, cfg, corte, inicio):
     # Población actual: mismo SQL al corte real (el resultado aún no existe; la columna y se ignora).
     hoy = preparar(datos_corte(con, cfg["sql"], corte), nombre)
     hoy["probabilidad"] = final.predict_proba(hoy[cols])[:, 1]
+    met["factores"] = efectos_en_probabilidad(final, hoy, cfg, met["factores"])
     q80, q50 = hoy.probabilidad.quantile(0.8), hoy.probabilidad.quantile(0.5)
     hoy["banda"] = np.where(hoy.probabilidad >= q80, "alta", np.where(hoy.probabilidad >= q50, "media", "baja"))
     hoy["modelo"] = nombre
