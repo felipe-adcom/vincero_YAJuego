@@ -1793,7 +1793,7 @@ def construir_html(D):
   <main class="content">
 
 <section class="view" id="v-inicio" data-title="Inicio">
-  <div class="vhead"><div><h1>Inicio</h1><p>Tu base al {corte:%d-%m-%Y}. Todo se recalcula con cada carga de datos.</p></div><span class="chip acc">Última actualización de datos: {ultimo:%d-%m-%Y}</span></div>
+  <div class="vhead"><div><h1>Inicio</h1><p>Tu base al {corte:%d-%m-%Y}.</p></div><span class="chip acc">Última actualización de datos: {ultimo:%d-%m-%Y}</span></div>
   <section class="panel"><div class="ph"><h2>Actividad · {periodo_txt}</h2><a class="btn" href="#octubre">Ver tendencias</a></div><div class="pb">
     <div class="g g4">
       {tile('Recargas', mm(rec.m), f"{n(rec.n)} recargas · {n(rec.j)} jugadores")}
