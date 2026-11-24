@@ -831,7 +831,7 @@ VISTAS_ACTIVACION = r"""<section class="view" id="v-campanas" data-title="Campa�
       </div>
       <div class="tw"><table class="wide"><thead><tr><th>Campaña</th><th>Objetivo</th><th class="num">SMS</th><th class="num">Tasa natural</th><th class="num">Sin SMS</th><th class="num">Con SMS</th><th class="num">Adicionales</th><th class="num">Monto asociado</th><th class="num">Costo / adicional</th><th>¿Se podrá confirmar?</th></tr></thead><tbody id="sim-body"></tbody></table></div>
       <div class="note"><b>Lectura de Vincero</b><span>Con efectos realistas (+10 % a +25 %), una sola ola no alcanza para confirmar resultados. Leer la ola 1 como piloto, acumular 2 o 3 olas y conseguir la base histórica para ganar volumen.</span></div>
-      <p class="small muted">Tasa natural: lo que hizo un grupo equivalente sin SMS en un corte simulado al {T_SIM}, 30 días antes del corte. Monto asociado: acciones adicionales × monto mediano de esa acción (recarga o apuesta); no equivale a ingresos. "Se podrá confirmar" compara el efecto del escenario con el efecto mínimo detectable del grupo de control.</p>
+      <p class="small muted">Tasa natural: lo que hizo un grupo equivalente sin SMS en un corte simulado al {T_SIM}, 30 días antes del corte. Monto asociado: acciones adicionales × monto mediano de esa acción (recarga o apuesta). "Se podrá confirmar" compara el efecto del escenario con el efecto mínimo detectable del grupo de control.</p>
     </div></section>
   <div class="cm">
     <section class="panel"><div class="ph"><h2>Campañas</h2><span class="sub">por prioridad</span></div><div class="clist" role="tablist">{ITEMS}
@@ -988,7 +988,7 @@ JS = r"""
     document.getElementById('s-ctl').textContent = nf(ctl);
     document.getElementById('s-sin').textContent = nf(sin);
     document.getElementById('s-add').textContent = '+' + nf(add);
-    document.getElementById('s-add-l').textContent = `Recargas o apuestas extra frente al grupo de control, en el escenario elegido. Equivalen a ${money(monto)} recargados o apostados (no es ingreso).`;
+    document.getElementById('s-add-l').textContent = `Recargas o apuestas extra frente al grupo de control, en el escenario elegido. ≈ ${money(monto)} en recargas o apuestas.`;
     document.getElementById('s-cpa').textContent = (t > 0 && add > 0) ? money(env * t / add) : '—';
     document.getElementById('s-cost').textContent = t > 0 ? `La ola cuesta ${money(env * t)}; dividido entre lo que agrega el SMS.` : 'Escribe arriba la tarifa por SMS del proveedor para calcularlo.';
   }
@@ -1438,7 +1438,7 @@ def construir_html(D):
     ]
     emb_aud, copies = D["emb_aud"], D["copies"]
     TK = D["ticket"]
-    # Monto típico asociado a la acción objetivo de cada campaña (mediana observada; no es ingreso).
+    # Monto típico asociado a la acción objetivo de cada campaña (mediana observada).
     TICKET = {"ACT01": (TK.primera, "primera recarga mediana"), "ACT05": (TK.primera, "primera recarga mediana"),
               "ONB02": (TK.segunda, "segunda recarga mediana"), "XS03": (TK.apuesta1, "primera apuesta deportiva mediana"),
               "RET04": (TK.retorno, "recargado en 14 días por quien vuelve (mediana)"),
@@ -1487,7 +1487,7 @@ def construir_html(D):
         <div><span>Sin SMS</span><b class="r-sin">—</b><small>{base_txt}</small></div>
         <div><span>Con SMS</span><b class="r-con">—</b><small class="r-con-l"></small></div>
         <div class="hl"><span>Adicionales por el SMS</span><b class="r-add">—</b><small class="r-add-l"></small></div>
-        <div><span>Monto asociado</span><b class="r-mon">—</b><small>{tk_lbl}: {cop(tk)}. No es ingreso.</small></div>
+        <div><span>Monto asociado</span><b class="r-mon">—</b><small>{tk_lbl}: {cop(tk)}.</small></div>
       </div>
       <p class="r-medible small"></p></div></section>
     <section class="step"><div class="sn">5</div><div class="sb"><h3>Cómo sabremos si funcionó</h3>
@@ -1796,8 +1796,8 @@ def construir_html(D):
   <div class="vhead"><div><h1>Inicio</h1><p>Tu base al {corte:%d-%m-%Y}. Todo se recalcula con cada carga de datos.</p></div><span class="chip acc">Última actualización de datos: {ultimo:%d-%m-%Y}</span></div>
   <section class="panel"><div class="ph"><h2>Actividad · {periodo_txt}</h2><a class="btn" href="#octubre">Ver tendencias</a></div><div class="pb">
     <div class="g g4">
-      {tile('Recargas', mm(rec.m), f"{n(rec.n)} recargas · {n(rec.j)} jugadores", tip="Dinero que los jugadores cargan a su cuenta. No es ingreso de YAjuego.")}
-      {tile('Apuestas deportivas', mm(apu.m), f"{n(apu.n)} apuestas · {n(apu.j)} jugadores", tip="Monto apostado. No es ingreso de YAjuego.")}
+      {tile('Recargas', mm(rec.m), f"{n(rec.n)} recargas · {n(rec.j)} jugadores")}
+      {tile('Apuestas deportivas', mm(apu.m), f"{n(apu.n)} apuestas · {n(apu.j)} jugadores")}
       {tile('Casino', mm(cas.ap), f"{n(cas.jug)} jugadores · desde el {fd(cas_d0)}", acc=True, tip=f"Monto apostado en {n(cas.rondas)} rondas. No hay datos de casino antes del {fd(cas_d0)}.")}
       {tile('Retiros', mm(retd.m), f"{n(retd.n)} retiros · {n(retd.j)} jugadores", tip="Monto pagado a los jugadores, neto de comisiones.")}
     </div>
@@ -1944,9 +1944,9 @@ def construir_html(D):
   <section class="panel"><div class="ph"><h2>Comparación mensual en base diaria</h2><span class="sub">Promedio por día completo de cada fuente</span></div><div class="pb flush">{t_mes.replace('<div class="tw">', '<div class="tw">', 1)}</div></section>
   <div class="g g2">
     <section class="panel"><div class="ph"><h2>Medios de recarga</h2></div><div class="pb flush">{t_met}</div></section>
-    <section class="panel"><div class="ph"><h2>Resultado agregado de apuestas</h2><span class="pill neu">No es GGR</span></div><div class="pb">
+    <section class="panel"><div class="ph"><h2>Lo apostado menos lo pagado</h2><span class="sub">Apuestas deportivas liquidadas</span></div><div class="pb">
       <div class="big">{mm(res.ap - res.pg)}</div>
-      <p class="small muted">Diferencia entre lo apostado y lo pagado en apuestas liquidadas ({n(hold, 1)} % de lo apostado). No descuenta bonos ni impuestos y excluye casino. No se calcula pérdida por jugador ni se usa para segmentar.</p></div></section>
+      <p class="small muted">{n(hold, 1)} % de lo apostado en deportes.</p></div></section>
   </div>
 </section>
 
@@ -1997,12 +1997,12 @@ def construir_html(D):
 
 <section class="view" id="v-octubre" data-title="Tendencias y casino">
   <div class="vhead"><div><h1>Tendencias y casino</h1><p>Cómo evoluciona la actividad semana a semana y qué pasa en casino.</p></div></div>
-  <section class="panel"><div class="ph"><h2>Promedio diario por semana</h2>{info("Promedio por día con datos completos de cada producto. Montos apostados y recargados; no son ingresos.")}</div><div class="pb">{f_sem}</div></section>
+  <section class="panel"><div class="ph"><h2>Promedio diario por semana</h2>{info("Promedio por día con datos completos de cada producto.")}</div><div class="pb">{f_sem}</div></section>
   <section class="panel"><div class="ph"><h2>Detalle por semana</h2><span class="sub">La más reciente primero</span></div><div class="pb flush">{t_pd}</div></section>
   <div class="g g4">
     {tile('Rondas de casino', n(cas.rondas), f"{n(cas.jug)} jugadores · {n(cas.juegos)} juegos")}
     {tile('Apostado en casino', mm(cas.ap), f"{n(cas_mismos / dep_mismos, 1)} veces lo de deportes", acc=True, tip="Comparación en los días con datos completos de ambos productos.")}
-    {tile('Premios pagados', mm(cas.pg), f"{n(100 * (cas.ap - cas.pg) / cas.ap, 1)} % menos que lo apostado", tip="No es la ganancia de YAjuego: no descuenta bonos, impuestos ni costos.")}
+    {tile('Premios pagados', mm(cas.pg), f"{n(100 * cas.pg / cas.ap, 1)} % de lo apostado vuelve al jugador")}
     {tile('Concentración', f"{n(D['cas_top'].t1, 0)}<small> %</small>", f"del monto en el 1 % de jugadores", tip=f"El 10 % más activo concentra el {n(D['cas_top'].t10, 0)} %. Pocos jugadores mueven el promedio: usa medianas.")}
   </div>
   {insight("Quien recarga y no apuesta en deportes juega casino", f"{n(pct_sr_cas, 0)} %", f"de quienes recargan sin apostar en deportes juega casino",
